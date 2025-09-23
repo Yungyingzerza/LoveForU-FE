@@ -10,7 +10,7 @@ Future<void> main() async {
     throw Exception('Missing LINE_CHANNEL_ID in .env');
   }
   await LineSDK.instance.setup(channelId);
-  print('LineSDK Prepared');
+
   runApp(const MyApp());
 }
 
@@ -43,16 +43,14 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> getProfile() async {
     try {
       final profile = await LineSDK.instance.getProfile();
-      print(
-        "User Profile: ${profile?.displayName}, ${profile?.userId}, ${profile?.pictureUrl}",
-      );
+
       setState(() {
-        _displayName = profile?.displayName ?? "";
-        _userId = profile?.userId ?? "";
-        _pictureUrl = profile?.pictureUrl ?? "";
+        _displayName = profile.displayName;
+        _userId = profile.userId;
+        _pictureUrl = profile.pictureUrl ?? "";
       });
     } catch (e) {
-      print("Get Profile Failed: $e");
+      // print("Get Profile Failed: $e");
     }
   }
 
@@ -66,7 +64,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _pictureUrl = result.userProfile?.pictureUrl ?? "";
       });
     } catch (e) {
-      print("Login Failed: $e");
+      // print("Login Failed: $e");
     }
   }
 
@@ -80,7 +78,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _pictureUrl = "";
       });
     } catch (e) {
-      print("Logout Failed: $e");
+      // print("Logout Failed: $e");
     }
   }
 
