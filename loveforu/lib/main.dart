@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_line_sdk/flutter_line_sdk.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  LineSDK.instance.setup("2008164158").then((_) {
-    print("LineSDK Prepared");
-  });
+  await dotenv.load(fileName: '.env');
+  final channelId = dotenv.env['LINE_CHANNEL_ID'];
+  if (channelId == null || channelId.isEmpty) {
+    throw Exception('Missing LINE_CHANNEL_ID in .env');
+  }
+  await LineSDK.instance.setup(channelId);
+  print('LineSDK Prepared');
   runApp(const MyApp());
 }
 
