@@ -7,6 +7,7 @@ import 'package:loveforu/services/photo_api_service.dart';
 import 'package:loveforu/services/user_api_service.dart';
 import 'package:loveforu/theme/app_gradients.dart';
 
+import 'puppy_cam_screen.dart';
 import 'upload_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -232,91 +233,216 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: const BoxDecoration(gradient: appBackgroundGradient),
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'LoveForU',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                    if (isLoggedIn)
-                      IconButton(
-                        onPressed: logout,
-                        icon: const Icon(Icons.logout, color: Colors.white),
-                        tooltip: 'Logout',
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (isLoggedIn)
-                  _UserHeader(
-                    pictureUrl: _pictureUrl,
-                    displayName: _displayName,
-                    userId: _userId,
-                    onRefreshProfile: getProfile,
-                  )
-                else
-                  _LoginCallToAction(
-                    onLogin: login,
-                    isLoading: _isAuthenticating || _isRestoringSession,
-                  ),
-                const SizedBox(height: 16),
-                if (isLoggedIn)
-                  ElevatedButton.icon(
-                    onPressed: _isLoadingPhotos ? null : _openUploadScreen,
-                    icon: const Icon(Icons.camera_alt),
-                    label: const Text('Open Camera'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white.withOpacity(0.15),
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                if (_errorMessage != null)
-                  Text(
-                    _errorMessage!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.redAccent),
-                  ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: !isLoggedIn
-                      ? const _LoginPlaceholder()
-                      : _isLoadingPhotos
-                          ? const Center(
-                              child: CircularProgressIndicator(color: Colors.white),
-                            )
-                          : _photos.isEmpty
-                              ? const Center(
-                                  child: Text(
-                                    'No photos yet. Capture your first moment!',
-                                    style: TextStyle(color: Colors.white70),
-                                  ),
-                                )
-                              : ListView.separated(
-                                  itemCount: _photos.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 16),
-                                  itemBuilder: (context, index) {
-                                    final photo = _photos[index];
-                                    return _PhotoCard(photo: photo);
-                                  },
-                                ),
-                ),
-              ],
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: isLoggedIn
+                ? _buildLoggedInLayout(context)
+                : _buildLoggedOutLayout(context),
           ),
         ),
       ),
     );
   }
+
+  Widget _buildLoggedInLayout(BuildContext context) {
+    final PhotoResponse? latestPhoto =
+        _photos.isNotEmpty ? _photos.first : null;
+    final Widget previewWidget = latestPhoto != null
+        ? Image.network(
+            _resolvePhotoUrl(latestPhoto.imageUrl),
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _buildPreviewPlaceholder(),
+          )
+        : _buildPreviewPlaceholder();
+    final ImageProvider? historyImage = latestPhoto != null
+        ? NetworkImage(_resolvePhotoUrl(latestPhoto.imageUrl))
+        : null;
+    final ImageProvider? avatarImage =
+        _pictureUrl.isNotEmpty ? NetworkImage(_pictureUrl) : null;
+    final int rawCount = _photos.length;
+    final int cappedCount = rawCount > 999 ? 999 : rawCount;
+    final String friendsLabel =
+        '$cappedCount Friend${cappedCount == 1 ? '' : 's'}';
+
+    return Column(
+      children: [
+        Expanded(
+          child: PuppyCamScreen(
+            avatarImage: avatarImage,
+            friendsLabel: friendsLabel,
+            preview: previewWidget,
+            historyImage: historyImage,
+            onMessages: _showUserMenu,
+            onGallery: () => _showGallery(context),
+            onShutter: _isLoadingPhotos ? null : _openUploadScreen,
+            onSwitchCamera: () {},
+            onHistory: () => _showGallery(context),
+          ),
+        ),
+        if (_errorMessage != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 8),
+            child: Text(
+              _errorMessage!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildLoggedOutLayout(BuildContext context) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _LoginCallToAction(
+          onLogin: login,
+          isLoading: _isAuthenticating || _isRestoringSession,
+        ),
+        const SizedBox(height: 32),
+        const _LoginPlaceholder(),
+        if (_errorMessage != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Text(
+              _errorMessage!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPreviewPlaceholder() {
+    return Container(
+      color: Colors.white10,
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(Icons.camera_alt_outlined, color: Colors.white38, size: 48),
+          SizedBox(height: 12),
+          Text(
+            'Capture your first moment',
+            style: TextStyle(color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showGallery(BuildContext context) {
+    if (_photos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No photos yet.')),
+      );
+      return;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0F1F39),
+      builder: (modalContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 48,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Shared Moments',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: MediaQuery.of(modalContext).size.height * 0.45,
+                  child: ListView.separated(
+                    itemCount: _photos.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (_, index) {
+                      final photo = _photos[index];
+                      return _PhotoListTile(photo: photo);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showUserMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0F1F39),
+      builder: (modalContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Colors.white24,
+                  backgroundImage:
+                      _pictureUrl.isNotEmpty ? NetworkImage(_pictureUrl) : null,
+                  child: _pictureUrl.isEmpty
+                      ? const Icon(Icons.person_outline, color: Colors.white)
+                      : null,
+                ),
+                title: Text(
+                  _displayName.isNotEmpty ? _displayName : 'Anonymous',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  _userId,
+                  style: const TextStyle(color: Colors.white54),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.refresh, color: Colors.white),
+                title: const Text('Refresh profile', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.of(modalContext).pop();
+                  getProfile();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.logout, color: Colors.redAccent),
+                title: const Text(
+                  'Logout',
+                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600),
+                ),
+                onTap: () {
+                  Navigator.of(modalContext).pop();
+                  logout();
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
+
 
 class _LoginCallToAction extends StatelessWidget {
   const _LoginCallToAction({
@@ -372,112 +498,50 @@ class _LoginPlaceholder extends StatelessWidget {
   }
 }
 
-class _UserHeader extends StatelessWidget {
-  const _UserHeader({
-    required this.pictureUrl,
-    required this.displayName,
-    required this.userId,
-    required this.onRefreshProfile,
-  });
-
-  final String pictureUrl;
-  final String displayName;
-  final String userId;
-  final VoidCallback onRefreshProfile;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 32,
-          backgroundImage:
-              pictureUrl.isNotEmpty ? NetworkImage(pictureUrl) : null,
-          backgroundColor: Colors.white24,
-          child: pictureUrl.isEmpty
-              ? const Icon(Icons.person, color: Colors.white, size: 32)
-              : null,
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                displayName.isNotEmpty ? displayName : 'Anonymous',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                userId,
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          onPressed: onRefreshProfile,
-          icon: const Icon(Icons.refresh, color: Colors.white),
-          tooltip: 'Refresh profile',
-        ),
-      ],
-    );
-  }
-}
-
-class _PhotoCard extends StatelessWidget {
-  const _PhotoCard({required this.photo});
+class _PhotoListTile extends StatelessWidget {
+  const _PhotoListTile({required this.photo});
 
   final PhotoResponse photo;
 
   @override
   Widget build(BuildContext context) {
-    final imageUrl = _resolvePhotoUrl(photo.imageUrl);
+    final String imageUrl = _resolvePhotoUrl(photo.imageUrl);
+    final String caption =
+        photo.caption?.isNotEmpty == true ? photo.caption! : 'No caption';
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (photo.imageUrl.isNotEmpty)
-              AspectRatio(
-                aspectRatio: 3 / 4,
-                child: Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Center(
-                    child: Icon(Icons.broken_image, color: Colors.white54),
-                  ),
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    photo.caption?.isNotEmpty == true
-                        ? photo.caption!
-                        : 'No caption',
-                    style: const TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Uploaded: ${photo.createdAt.toLocal()}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
-                ],
-              ),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(12),
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(
+            imageUrl,
+            width: 56,
+            height: 56,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(
+              width: 56,
+              height: 56,
+              color: Colors.white12,
+              alignment: Alignment.center,
+              child: const Icon(Icons.broken_image, color: Colors.white54),
             ),
-          ],
+          ),
+        ),
+        title: Text(
+          caption,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        subtitle: Text(
+          'Uploaded: ${photo.createdAt.toLocal()}',
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
         ),
       ),
     );
