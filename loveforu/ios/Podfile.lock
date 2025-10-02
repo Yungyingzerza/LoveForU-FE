@@ -3,6 +3,8 @@ PODS:
   - flutter_line_sdk (2.6.1):
     - Flutter
     - LineSDKSwift (~> 5.13)
+  - image_picker_ios (0.0.1):
+    - Flutter
   - LineSDKSwift (5.13.0):
     - LineSDKSwift/Core (= 5.13.0)
   - LineSDKSwift/Core (5.13.0)
@@ -10,6 +12,7 @@ PODS:
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - flutter_line_sdk (from `.symlinks/plugins/flutter_line_sdk/ios`)
+  - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
 
 SPEC REPOS:
   trunk:
@@ -20,10 +23,13 @@ EXTERNAL SOURCES:
     :path: Flutter
   flutter_line_sdk:
     :path: ".symlinks/plugins/flutter_line_sdk/ios"
+  image_picker_ios:
+    :path: ".symlinks/plugins/image_picker_ios/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_line_sdk: 8068338894403b2beeb6db3aeff7a5be92a8fe1c
+  image_picker_ios: 7fe1ff8e34c1790d6fff70a32484959f563a928a
   LineSDKSwift: 6dbcd24677d19dce2cee10e433f9d040b9c11cb9
 
 PODFILE CHECKSUM: e37f816f108eb1b5439d3f8005febecc8fc68f8e
