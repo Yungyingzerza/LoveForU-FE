@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 /// Foreground camera UI inspired by Locket-style apps.
-class PuppyCamScreen extends StatelessWidget {
-  const PuppyCamScreen({
+class CameraCaptureScreen extends StatelessWidget {
+  const CameraCaptureScreen({
     super.key,
     required this.avatarImage,
     required this.friendsLabel,

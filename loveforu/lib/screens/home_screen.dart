@@ -9,7 +9,7 @@ import 'package:loveforu/services/photo_api_service.dart';
 import 'package:loveforu/services/user_api_service.dart';
 import 'package:loveforu/theme/app_gradients.dart';
 
-import 'puppy_cam_screen.dart';
+import 'camera_capture_screen.dart';
 import 'upload_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -296,7 +296,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       children: [
         Expanded(
-          child: PuppyCamScreen(
+          child: CameraCaptureScreen(
             avatarImage: avatarImage,
             friendsLabel: friendsLabel,
             preview: previewWidget,
