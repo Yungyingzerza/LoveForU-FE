@@ -7,9 +7,14 @@ import 'package:loveforu/services/photo_api_service.dart';
 import 'package:loveforu/theme/app_gradients.dart';
 
 class UploadScreen extends StatefulWidget {
-  const UploadScreen({super.key, required this.photoApiService});
+  const UploadScreen({
+    super.key,
+    required this.photoApiService,
+    this.initialFile,
+  });
 
   final PhotoApiService photoApiService;
+  final XFile? initialFile;
 
   @override
   State<UploadScreen> createState() => _UploadScreenState();
@@ -27,7 +32,12 @@ class _UploadScreenState extends State<UploadScreen> {
   @override
   void initState() {
     super.initState();
-    _setupCamera();
+    final preselectedFile = widget.initialFile;
+    if (preselectedFile != null) {
+      _capturedFile = preselectedFile;
+    } else {
+      _setupCamera();
+    }
   }
 
   @override
@@ -149,6 +159,9 @@ class _UploadScreenState extends State<UploadScreen> {
       _captionController.clear();
       _errorMessage = null;
     });
+    if (_cameraController == null) {
+      _setupCamera();
+    }
   }
 
   @override

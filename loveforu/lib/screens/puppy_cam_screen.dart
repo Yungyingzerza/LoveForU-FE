@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 /// Foreground camera UI inspired by Locket-style apps.
@@ -20,7 +22,7 @@ class PuppyCamScreen extends StatelessWidget {
   final String friendsLabel;
   final Widget preview;
   final VoidCallback onMessages;
-  final VoidCallback onGallery;
+  final FutureOr<void> Function() onGallery;
   final Future<void> Function()? onShutter;
   final VoidCallback onSwitchCamera;
   final VoidCallback onHistory;
@@ -159,7 +161,7 @@ class PuppyCamScreen extends StatelessWidget {
         _buildSquareButton(
           onTap: () {
             debugPrint('Gallery');
-            onGallery();
+            return onGallery();
           },
           icon: Icons.image_outlined,
         ),
@@ -177,7 +179,10 @@ class PuppyCamScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSquareButton({required VoidCallback onTap, required IconData icon}) {
+  Widget _buildSquareButton({
+    required FutureOr<void> Function() onTap,
+    required IconData icon,
+  }) {
     return SizedBox(
       width: 64,
       height: 64,
@@ -186,7 +191,13 @@ class PuppyCamScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onTap,
+          onTap: () async {
+            try {
+              await Future.sync(onTap);
+            } catch (error, _) {
+              debugPrint('Square button tap failed: $error');
+            }
+          },
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),

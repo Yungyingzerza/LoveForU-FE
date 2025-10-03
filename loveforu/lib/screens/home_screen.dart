@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_line_sdk/flutter_line_sdk.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:loveforu/services/cookie_http_client.dart';
 import 'package:loveforu/services/photo_api_service.dart';
@@ -30,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final CookieHttpClient _cookieClient;
   late final UserApiService _userApiService;
   late final PhotoApiService _photoApiService;
+  late final ImagePicker _imagePicker;
 
   @override
   void initState() {
@@ -37,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _cookieClient = CookieHttpClient();
     _userApiService = UserApiService(client: _cookieClient);
     _photoApiService = PhotoApiService(client: _cookieClient);
+    _imagePicker = ImagePicker();
     _restoreSession();
   }
 
@@ -206,10 +210,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _openUploadScreen() async {
+  Future<void> _openUploadScreen({XFile? initialFile}) async {
     final photo = await Navigator.of(context).push<PhotoResponse>(
       MaterialPageRoute(
-        builder: (_) => UploadScreen(photoApiService: _photoApiService),
+        builder: (_) => UploadScreen(
+          photoApiService: _photoApiService,
+          initialFile: initialFile,
+        ),
       ),
     );
 
@@ -221,6 +228,29 @@ class _HomeScreenState extends State<HomeScreen> {
       _photos = <PhotoResponse>[photo, ..._photos];
       _errorMessage = null;
     });
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+      );
+      if (pickedFile == null) {
+        return;
+      }
+
+      await _openUploadScreen(initialFile: pickedFile);
+    } on PlatformException catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gallery permission denied.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to pick an image.')),
+      );
+    }
   }
 
   @override
@@ -272,7 +302,7 @@ class _HomeScreenState extends State<HomeScreen> {
             preview: previewWidget,
             historyImage: historyImage,
             onMessages: _showUserMenu,
-            onGallery: () => _showGallery(context),
+            onGallery: _pickImageFromGallery,
             onShutter: _isLoadingPhotos ? null : _openUploadScreen,
             onSwitchCamera: () {},
             onHistory: () => _showGallery(context),
