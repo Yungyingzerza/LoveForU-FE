@@ -129,6 +129,7 @@ class PhotoResponse {
   const PhotoResponse({
     required this.id,
     required this.uploaderId,
+    required this.uploaderDisplayName,
     required this.imageUrl,
     this.caption,
     required this.createdAt,
@@ -138,6 +139,7 @@ class PhotoResponse {
     return PhotoResponse(
       id: json['id'] as String? ?? '',
       uploaderId: json['uploaderId'] as String? ?? '',
+      uploaderDisplayName: json['uploaderDisplayName'] as String? ?? '',
       imageUrl: json['imageUrl'] as String? ?? '',
       caption: json['caption'] as String?,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
@@ -147,6 +149,7 @@ class PhotoResponse {
 
   final String id;
   final String uploaderId;
+  final String uploaderDisplayName;
   final String imageUrl;
   final String? caption;
   final DateTime createdAt;

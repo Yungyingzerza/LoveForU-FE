@@ -15,6 +15,7 @@ class CameraCaptureScreen extends StatelessWidget {
     required this.onSwitchCamera,
     required this.onHistory,
     required this.historyImage,
+    required this.onFriendFilter,
     this.historyLabel = 'History',
   });
 
@@ -28,6 +29,7 @@ class CameraCaptureScreen extends StatelessWidget {
   final VoidCallback onHistory;
   final ImageProvider? historyImage;
   final String historyLabel;
+  final VoidCallback onFriendFilter;
 
   @override
   Widget build(BuildContext context) {
@@ -76,29 +78,47 @@ class CameraCaptureScreen extends StatelessWidget {
               ),
             ),
           ),
-          Container(
-            constraints: const BoxConstraints(minWidth: 160, minHeight: 40),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: Colors.white12,
+          Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(40),
+            child: InkWell(
               borderRadius: BorderRadius.circular(40),
-              border: Border.all(color: Colors.white24, width: 1),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.group_outlined, color: Colors.white, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  friendsLabel,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+              onTap: () {
+                debugPrint('Friend filter');
+                onFriendFilter();
+              },
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 160, minHeight: 40),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(40),
+                  border: Border.all(color: Colors.white24, width: 1),
                 ),
-              ],
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.group_outlined, color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 180),
+                      child: Text(
+                        friendsLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.expand_more, color: Colors.white, size: 20),
+                  ],
+                ),
+              ),
             ),
           ),
           SizedBox(

@@ -133,6 +133,24 @@ class FriendApiService {
     return FriendshipResponse.fromJson(decoded);
   }
 
+  Future<List<FriendListItem>> getFriendships() async {
+    final uri = Uri.parse('$_baseUrl/api/friendship');
+    developer.log('GET $uri', name: 'FriendApiService');
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw FriendApiException(
+        'Failed to load friends: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
+    }
+
+    final List<dynamic> decoded = jsonDecode(response.body) as List<dynamic>;
+    return decoded
+        .map((dynamic item) =>
+            FriendListItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<FriendshipResponse> acceptFriendship(String id) async {
     return _handleFriendshipDecision(id: id, action: 'accept');
   }
@@ -224,6 +242,38 @@ class FriendshipResponse {
 
   bool isRequester(String userId) => requesterId == userId;
   bool isAddressee(String userId) => addresseeId == userId;
+}
+
+class FriendListItem {
+  const FriendListItem({
+    required this.friendshipId,
+    required this.friendUserId,
+    required this.displayName,
+    required this.pictureUrl,
+    required this.createdAt,
+    this.acceptedAt,
+  });
+
+  factory FriendListItem.fromJson(Map<String, dynamic> json) {
+    return FriendListItem(
+      friendshipId: json['friendshipId'] as String? ?? '',
+      friendUserId: json['friendUserId'] as String? ?? '',
+      displayName: json['displayName'] as String? ?? '',
+      pictureUrl: json['pictureUrl'] as String? ?? '',
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      acceptedAt: json['acceptedAt'] != null
+          ? DateTime.tryParse(json['acceptedAt'].toString())
+          : null,
+    );
+  }
+
+  final String friendshipId;
+  final String friendUserId;
+  final String displayName;
+  final String pictureUrl;
+  final DateTime createdAt;
+  final DateTime? acceptedAt;
 }
 
 class FriendApiException implements Exception {

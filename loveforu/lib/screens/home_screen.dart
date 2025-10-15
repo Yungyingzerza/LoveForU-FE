@@ -33,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isAuthenticating = false;
   bool _isRestoringSession = true;
   List<PhotoResponse> _photos = <PhotoResponse>[];
+  List<FriendListItem> _friends = <FriendListItem>[];
+  String? _selectedFriendUserId;
   bool _hasMorePhotos = true;
   bool _supportsPhotoPagination = true;
   bool _isLoadingMorePhotos = false;
@@ -114,9 +116,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _pictureUrl = response.pictureUrl?.isNotEmpty == true
             ? response.pictureUrl!
             : _pictureUrl;
+        _selectedFriendUserId = null;
       });
 
       await _loadPhotos();
+      _loadFriends();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -157,9 +161,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _pictureUrl = response.pictureUrl?.isNotEmpty == true
             ? response.pictureUrl!
             : _pictureUrl;
+        _selectedFriendUserId = null;
       });
 
       await _loadPhotos();
+      _loadFriends();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -168,6 +174,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _userId = '';
         _pictureUrl = '';
         _photos = <PhotoResponse>[];
+        _friends = <FriendListItem>[];
+        _selectedFriendUserId = null;
         _hasMorePhotos = true;
         _supportsPhotoPagination = true;
         _isLoadingMorePhotos = false;
@@ -192,6 +200,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _userId = '';
         _pictureUrl = '';
         _photos = <PhotoResponse>[];
+        _friends = <FriendListItem>[];
+        _selectedFriendUserId = null;
         _isLoadingPhotos = false;
         _errorMessage = null;
         _hasMorePhotos = true;
@@ -238,6 +248,65 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  Future<void> _loadFriends() async {
+    try {
+      final friends = await _friendApiService.getFriendships();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _friends = friends;
+        if (_selectedFriendUserId != null &&
+            _selectedFriendUserId != _userId &&
+            !_friends.any(
+              (friend) => friend.friendUserId == _selectedFriendUserId,
+            )) {
+          _selectedFriendUserId = null;
+        }
+      });
+    } on FriendApiException catch (error) {
+      developer.log(
+        'Failed to load friends',
+        name: 'HomeScreen',
+        error: error,
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to load friends',
+        name: 'HomeScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  List<PhotoResponse> _currentPhotos() {
+    if (_selectedFriendUserId == null) {
+      return _photos;
+    }
+    return _photos
+        .where((photo) => photo.uploaderId == _selectedFriendUserId)
+        .toList();
+  }
+
+  String _currentFriendFilterLabel() {
+    final String? selectedId = _selectedFriendUserId;
+    if (selectedId == null || selectedId.isEmpty) {
+      return 'Everyone';
+    }
+    if (selectedId == _userId) {
+      return _displayName.isNotEmpty ? _displayName : 'Just me';
+    }
+    for (final friend in _friends) {
+      if (friend.friendUserId == selectedId) {
+        return friend.displayName.isNotEmpty
+            ? friend.displayName
+            : friend.friendUserId;
+      }
+    }
+    return selectedId;
   }
 
   void _handleGalleryScroll() {
@@ -411,6 +480,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'You and $otherUserId are now friends!'
             : 'Friend request accepted!';
         await _loadPhotos();
+        _loadFriends();
       } else if (friendship.isPending) {
         message = otherUserId.isNotEmpty
             ? 'Friend request sent to $otherUserId.'
@@ -519,31 +589,31 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLoggedInLayout(BuildContext context) {
+    final List<PhotoResponse> visiblePhotos = _currentPhotos();
     final PhotoResponse? latestPhoto =
-        _photos.isNotEmpty ? _photos.first : null;
-    final Widget previewWidget = _photos.isNotEmpty
+        visiblePhotos.isNotEmpty ? visiblePhotos.first : null;
+    final String friendFilterLabel = _currentFriendFilterLabel();
+    final String placeholderMessage =
+        _selectedFriendUserId == null || _selectedFriendUserId!.isEmpty
+            ? 'Share a moment with friends.'
+            : _selectedFriendUserId == _userId
+                ? 'You have not shared a photo yet.'
+                : 'No photos from $friendFilterLabel yet.';
+    final Widget previewWidget = visiblePhotos.isNotEmpty
         ? _PhotoFeedPreview(
-            photos: _photos,
+            photos: visiblePhotos,
             resolvePhotoUrl: _resolvePhotoUrl,
             onLoadMore: _loadMorePhotos,
             hasMore: _supportsPhotoPagination && _hasMorePhotos,
             isLoadingMore: _isLoadingMorePhotos,
           )
-        : _buildPreviewPlaceholder();
+        : _buildPreviewPlaceholder(message: placeholderMessage);
     final ImageProvider? historyImage = latestPhoto != null
         ? NetworkImage(_resolvePhotoUrl(latestPhoto.imageUrl))
         : null;
     final ImageProvider? avatarImage =
         _pictureUrl.isNotEmpty ? NetworkImage(_pictureUrl) : null;
-    final Set<String> uniqueUploaders = _photos
-        .map((photo) => photo.uploaderId)
-        .where((id) => id.isNotEmpty)
-        .toSet()
-      ..remove(_userId);
-    final int friendCount = uniqueUploaders.length;
-    final int cappedCount = friendCount > 999 ? 999 : friendCount;
-    final String friendsLabel =
-        '$cappedCount Friend${cappedCount == 1 ? '' : 's'}';
+    final String friendsLabel = 'Viewing: $friendFilterLabel';
 
     return Column(
       children: [
@@ -558,6 +628,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onShutter: _isLoadingPhotos ? null : _openUploadScreen,
             onSwitchCamera: () {},
             onHistory: () => _showGallery(context),
+            onFriendFilter: _showFriendFilter,
           ),
         ),
         if (_errorMessage != null)
@@ -596,19 +667,20 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildPreviewPlaceholder() {
+  Widget _buildPreviewPlaceholder({String message = 'Capture your first moment'}) {
     return Container(
       color: Colors.white10,
       alignment: Alignment.center,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.camera_alt_outlined, color: Colors.white38, size: 48),
-          SizedBox(height: 12),
+        children: [
+          const Icon(Icons.camera_alt_outlined, color: Colors.white38, size: 48),
+          const SizedBox(height: 12),
           Text(
-            'Capture your first moment',
-            style: TextStyle(color: Colors.white70),
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70),
           ),
         ],
       ),
@@ -616,9 +688,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showGallery(BuildContext context) {
-    if (_photos.isEmpty) {
+    final List<PhotoResponse> initialPhotos = _currentPhotos();
+    if (initialPhotos.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No photos yet.')),
+        SnackBar(
+          content: Text(
+            _selectedFriendUserId == null
+                ? 'No photos yet.'
+                : 'No photos for this filter yet.',
+          ),
+        ),
       );
       return;
     }
@@ -626,6 +705,93 @@ class _HomeScreenState extends State<HomeScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: const Color(0xFF0F1F39),
+      builder: (modalContext) {
+        final List<PhotoResponse> visiblePhotos = _currentPhotos();
+        final String filterLabel = _currentFriendFilterLabel();
+        final String titleText = filterLabel == 'Everyone'
+            ? 'Shared Moments'
+            : 'Shared Moments • $filterLabel';
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 48,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  titleText,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: MediaQuery.of(modalContext).size.height * 0.45,
+                  child: ListView.separated(
+                    controller: _galleryScrollController,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount:
+                        visiblePhotos.length + (_shouldShowLoadMoreTile ? 1 : 0),
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (_, index) {
+                      if (_shouldShowLoadMoreTile &&
+                          index >= visiblePhotos.length) {
+                        return _buildLoadMoreTile();
+                      }
+                      final photo = visiblePhotos[index];
+                      return _PhotoListTile(photo: photo);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showFriendFilter() async {
+    if (_userId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Login to choose whose photos to view.')),
+      );
+      return;
+    }
+
+    await _loadFriends();
+
+    final List<_FriendFilterOption> options = <_FriendFilterOption>[
+      const _FriendFilterOption(id: null, label: 'Everyone'),
+      if (_userId.isNotEmpty)
+        _FriendFilterOption(
+          id: _userId,
+          label: _displayName.isNotEmpty ? _displayName : 'Just me',
+        ),
+      ..._friends.map(
+        (friend) => _FriendFilterOption(
+          id: friend.friendUserId,
+          label: friend.displayName.isNotEmpty
+              ? friend.displayName
+              : friend.friendUserId,
+        ),
+      ),
+    ];
+
+    final String? initialSelection = _selectedFriendUserId;
+
+    final String? selectedId = await showModalBottomSheet<String?>(
+      context: context,
       backgroundColor: const Color(0xFF0F1F39),
       builder: (modalContext) {
         return SafeArea(
@@ -643,27 +809,53 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                Text(
-                  'Shared Moments',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
+                const Text(
+                  'View photos from',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 16),
-                SizedBox(
-                  height: MediaQuery.of(modalContext).size.height * 0.45,
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 320),
                   child: ListView.separated(
-                    controller: _galleryScrollController,
+                    shrinkWrap: true,
                     physics: const BouncingScrollPhysics(),
-                    itemCount: _photos.length + (_shouldShowLoadMoreTile ? 1 : 0),
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemCount: options.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (_, index) {
-                      if (_shouldShowLoadMoreTile && index >= _photos.length) {
-                        return _buildLoadMoreTile();
-                      }
-                      final photo = _photos[index];
-                      return _PhotoListTile(photo: photo);
+                      final option = options[index];
+                      final bool isSelected = option.id == initialSelection ||
+                          (option.id == null && initialSelection == null);
+                      return ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        tileColor:
+                            isSelected ? Colors.white12 : Colors.transparent,
+                        leading: Icon(
+                          option.id == null
+                              ? Icons.public
+                              : option.id == _userId
+                                  ? Icons.person_outline
+                                  : Icons.person,
+                          color: Colors.white,
+                        ),
+                        title: Text(
+                          option.label,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight:
+                                isSelected ? FontWeight.w600 : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: Colors.white)
+                            : null,
+                        onTap: () => Navigator.of(modalContext).pop(option.id),
+                      );
                     },
                   ),
                 ),
@@ -673,6 +865,17 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+
+    if (!mounted) {
+      return;
+    }
+    if (selectedId == initialSelection) {
+      return;
+    }
+
+    setState(() {
+      _selectedFriendUserId = selectedId;
+    });
   }
 
   void _showFriendRequests() {
@@ -693,18 +896,21 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
             child: SizedBox(
               height: MediaQuery.of(modalContext).size.height * 0.65,
-              child: _FriendRequestsSheet(
+              child: _FriendshipCenterSheet(
                 friendApiService: _friendApiService,
                 currentUserId: _userId,
-                onFriendshipUpdated: () {
-                  _loadPhotos();
-                },
+                onFriendshipUpdated: _handleFriendshipUpdated,
               ),
             ),
           ),
         );
       },
     );
+  }
+
+  void _handleFriendshipUpdated() {
+    _loadFriends();
+    _loadPhotos();
   }
 
   void _showUserMenu() {
@@ -744,8 +950,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.people_alt_outlined, color: Colors.white),
-                title:
-                    const Text('Friend requests', style: TextStyle(color: Colors.white)),
+                title: const Text('Friends & requests',
+                    style: TextStyle(color: Colors.white)),
                 onTap: () {
                   Navigator.of(modalContext).pop();
                   _showFriendRequests();
@@ -783,8 +989,10 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 
-class _FriendRequestsSheet extends StatefulWidget {
-  const _FriendRequestsSheet({
+enum _FriendshipTab { friends, requests }
+
+class _FriendshipCenterSheet extends StatefulWidget {
+  const _FriendshipCenterSheet({
     required this.friendApiService,
     required this.currentUserId,
     required this.onFriendshipUpdated,
@@ -795,27 +1003,72 @@ class _FriendRequestsSheet extends StatefulWidget {
   final VoidCallback onFriendshipUpdated;
 
   @override
-  State<_FriendRequestsSheet> createState() => _FriendRequestsSheetState();
+  State<_FriendshipCenterSheet> createState() => _FriendshipCenterSheetState();
 }
 
-class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
+class _FriendshipCenterSheetState extends State<_FriendshipCenterSheet> {
+  _FriendshipTab _activeTab = _FriendshipTab.friends;
+  List<FriendListItem> _friends = <FriendListItem>[];
+  bool _isLoadingFriends = true;
+  String? _friendsError;
+
   FriendshipPendingDirection _direction = FriendshipPendingDirection.incoming;
   List<FriendshipResponse> _requests = <FriendshipResponse>[];
-  bool _isLoading = true;
-  String? _errorMessage;
+  bool _isLoadingRequests = false;
+  String? _requestsError;
+  bool _hasLoadedRequests = false;
+
   String? _activeFriendshipId;
   bool _isActiveActionAccept = true;
 
   @override
   void initState() {
     super.initState();
-    _loadRequests();
+    _loadFriends();
+  }
+
+  Future<void> _loadFriends() async {
+    setState(() {
+      _isLoadingFriends = true;
+      _friendsError = null;
+    });
+    try {
+      final friends = await widget.friendApiService.getFriendships();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _friends = friends;
+      });
+    } on FriendApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _friendsError = error.message;
+      });
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to load friends',
+        name: 'FriendshipCenterSheet',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() {
+        _friendsError = 'Unable to load friends right now.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingFriends = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadRequests() async {
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _isLoadingRequests = true;
+      _requestsError = null;
     });
     try {
       final requests = await widget.friendApiService.getPendingFriendships(
@@ -826,35 +1079,55 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
       }
       setState(() {
         _requests = requests;
+        _hasLoadedRequests = true;
       });
     } on FriendApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
-        _errorMessage = error.message;
+        _requestsError = error.message;
+        _hasLoadedRequests = true;
       });
     } catch (error, stackTrace) {
       developer.log(
         'Failed to load pending friendships',
-        name: 'FriendRequestsSheet',
+        name: 'FriendshipCenterSheet',
         error: error,
         stackTrace: stackTrace,
       );
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
-        _errorMessage = 'Unable to load friend requests right now.';
+        _requestsError = 'Unable to load friend requests right now.';
+        _hasLoadedRequests = true;
       });
     } finally {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _isLoadingRequests = false;
+        });
       }
-      setState(() {
-        _isLoading = false;
-      });
     }
+  }
+
+  void _onTabSelected(_FriendshipTab tab) {
+    if (_activeTab == tab) {
+      return;
+    }
+    setState(() {
+      _activeTab = tab;
+    });
+    if (tab == _FriendshipTab.requests && !_hasLoadedRequests) {
+      _loadRequests();
+    }
+  }
+
+  void _onDirectionSelected(FriendshipPendingDirection direction) {
+    if (_direction == direction) {
+      return;
+    }
+    setState(() {
+      _direction = direction;
+    });
+    _loadRequests();
   }
 
   Future<void> _handleDecision({
@@ -881,14 +1154,17 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
             .toList(growable: false);
       });
 
-      widget.onFriendshipUpdated();
-
       final String message = accept
           ? 'Friend request accepted.'
           : 'Friend request declined.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
+
+      if (accept) {
+        _loadFriends();
+      }
+      widget.onFriendshipUpdated();
     } on FriendApiException catch (error) {
       if (!mounted) {
         return;
@@ -899,7 +1175,7 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
     } catch (error, stackTrace) {
       developer.log(
         'Failed to ${accept ? 'accept' : 'deny'} friendship',
-        name: 'FriendRequestsSheet',
+        name: 'FriendshipCenterSheet',
         error: error,
         stackTrace: stackTrace,
       );
@@ -916,12 +1192,11 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
         ),
       );
     } finally {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _activeFriendshipId = null;
+        });
       }
-      setState(() {
-        _activeFriendshipId = null;
-      });
     }
   }
 
@@ -942,7 +1217,7 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
         ),
         const SizedBox(height: 20),
         const Text(
-          'Friend Requests',
+          'Friends & Requests',
           textAlign: TextAlign.center,
           style: TextStyle(
             color: Colors.white,
@@ -951,16 +1226,50 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
           ),
         ),
         const SizedBox(height: 16),
-        _buildFilterRow(),
+        _buildTabSelector(),
+        if (_activeTab == _FriendshipTab.requests) ...[
+          const SizedBox(height: 16),
+          _buildDirectionSelector(),
+        ],
         const SizedBox(height: 16),
-        Expanded(
-          child: _buildContent(),
-        ),
+        Expanded(child: _buildContent()),
       ],
     );
   }
 
-  Widget _buildFilterRow() {
+  Widget _buildTabSelector() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: _FriendshipTab.values.map((tab) {
+        final bool isSelected = tab == _activeTab;
+        final String label =
+            tab == _FriendshipTab.friends ? 'Friends' : 'Requests';
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: ChoiceChip(
+            label: Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.black87 : Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            selected: isSelected,
+            selectedColor: Colors.white,
+            backgroundColor: Colors.white12,
+            onSelected: (bool selected) {
+              if (!selected) {
+                return;
+              }
+              _onTabSelected(tab);
+            },
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildDirectionSelector() {
     return Wrap(
       spacing: 12,
       runSpacing: 12,
@@ -982,10 +1291,7 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
             if (!selected || direction == _direction) {
               return;
             }
-            setState(() {
-              _direction = direction;
-            });
-            _loadRequests();
+            _onDirectionSelected(direction);
           },
         );
       }).toList(),
@@ -993,18 +1299,75 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
   }
 
   Widget _buildContent() {
-    if (_isLoading) {
+    if (_activeTab == _FriendshipTab.friends) {
+      return _buildFriendsContent();
+    }
+    return _buildRequestsContent();
+  }
+
+  Widget _buildFriendsContent() {
+    if (_isLoadingFriends) {
       return const Center(
         child: CircularProgressIndicator(strokeWidth: 2),
       );
     }
 
-    if (_errorMessage != null) {
+    if (_friendsError != null) {
       return Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            _errorMessage!,
+            _friendsError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: _loadFriends,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white38),
+            ),
+            child: const Text('Try again'),
+          ),
+        ],
+      );
+    }
+
+    if (_friends.isEmpty) {
+      return const Center(
+        child: Text(
+          'No friends yet. Send a request to start sharing!',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      physics: const BouncingScrollPhysics(),
+      itemCount: _friends.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (_, index) {
+        final friend = _friends[index];
+        return _FriendListTile(friend: friend);
+      },
+    );
+  }
+
+  Widget _buildRequestsContent() {
+    if (_isLoadingRequests) {
+      return const Center(
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+
+    if (_requestsError != null) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            _requestsError!,
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white70),
           ),
@@ -1048,6 +1411,89 @@ class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
   }
 }
 
+class _FriendListTile extends StatelessWidget {
+  const _FriendListTile({required this.friend});
+
+  final FriendListItem friend;
+
+  @override
+  Widget build(BuildContext context) {
+    final String displayName =
+        friend.displayName.isNotEmpty ? friend.displayName : friend.friendUserId;
+    final String subtitle = friend.friendUserId;
+    final DateTime acceptedAt =
+        (friend.acceptedAt ?? friend.createdAt).toLocal();
+    final MaterialLocalizations localizations = MaterialLocalizations.of(context);
+    final String acceptedLabel =
+        'Friends since: ${localizations.formatMediumDate(acceptedAt)} • ${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(acceptedAt))}';
+    final String pictureUrl = friend.pictureUrl.isNotEmpty
+        ? _resolvePhotoUrl(friend.pictureUrl)
+        : '';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.all(12),
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: pictureUrl.isNotEmpty
+              ? Image.network(
+                  pictureUrl,
+                  width: 56,
+                  height: 56,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _friendAvatarPlaceholder(),
+                )
+              : _friendAvatarPlaceholder(),
+        ),
+        title: Text(
+          displayName,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              subtitle,
+              style: const TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              acceptedLabel,
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _friendAvatarPlaceholder() {
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        color: Colors.white12,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Icon(Icons.person_outline, color: Colors.white54),
+    );
+  }
+}
+
+class _FriendFilterOption {
+  const _FriendFilterOption({required this.id, required this.label});
+
+  final String? id;
+  final String label;
+}
+
 class _FriendRequestTile extends StatelessWidget {
   const _FriendRequestTile({
     required this.friendship,
@@ -1078,6 +1524,9 @@ class _FriendRequestTile extends StatelessWidget {
         ? 'You can accept or decline this request.'
         : 'Pending response from $otherUserId.';
     final DateTime createdAtLocal = friendship.createdAt.toLocal();
+    final MaterialLocalizations localizations = MaterialLocalizations.of(context);
+    final String requestedLabel =
+        'Requested at: ${localizations.formatMediumDate(createdAtLocal)} • ${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(createdAtLocal))}';
 
     final bool showActions = isIncoming && friendship.isPending;
 
@@ -1104,7 +1553,7 @@ class _FriendRequestTile extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Requested at: $createdAtLocal',
+            requestedLabel,
             style: const TextStyle(color: Colors.white54, fontSize: 12),
           ),
           if (showActions) ...[
@@ -1351,8 +1800,9 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
   Widget _buildCaptionOverlay(PhotoResponse photo) {
     final String caption =
         photo.caption?.trim().isNotEmpty == true ? photo.caption!.trim() : 'No caption';
-    final String uploader =
-        photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown uploader';
+    final String uploader = photo.uploaderDisplayName.isNotEmpty
+        ? photo.uploaderDisplayName
+        : (photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown uploader');
     final DateTime localTime = photo.createdAt.toLocal();
 
     return Container(
@@ -1462,8 +1912,9 @@ class _PhotoListTile extends StatelessWidget {
     final String imageUrl = _resolvePhotoUrl(photo.imageUrl);
     final String caption =
         photo.caption?.isNotEmpty == true ? photo.caption! : 'No caption';
-    final String uploader =
-        photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown';
+    final String uploader = photo.uploaderDisplayName.isNotEmpty
+        ? photo.uploaderDisplayName
+        : (photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown');
     final DateTime uploadedAt = photo.createdAt.toLocal();
 
     return Container(
