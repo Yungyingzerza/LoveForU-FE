@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -5,6 +7,7 @@ import 'package:flutter_line_sdk/flutter_line_sdk.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:loveforu/services/cookie_http_client.dart';
+import 'package:loveforu/services/friend_api_service.dart';
 import 'package:loveforu/services/photo_api_service.dart';
 import 'package:loveforu/services/user_api_service.dart';
 import 'package:loveforu/theme/app_gradients.dart';
@@ -20,6 +23,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const int _photosPageSize = 20;
+
   String _pictureUrl = '';
   String _displayName = '';
   String _userId = '';
@@ -28,9 +33,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isAuthenticating = false;
   bool _isRestoringSession = true;
   List<PhotoResponse> _photos = <PhotoResponse>[];
+  bool _hasMorePhotos = true;
+  bool _supportsPhotoPagination = true;
+  bool _isLoadingMorePhotos = false;
+  bool _isAddingFriend = false;
+  final ScrollController _galleryScrollController = ScrollController();
 
   late final CookieHttpClient _cookieClient;
   late final UserApiService _userApiService;
+  late final FriendApiService _friendApiService;
   late final PhotoApiService _photoApiService;
   late final ImagePicker _imagePicker;
 
@@ -39,13 +50,17 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _cookieClient = CookieHttpClient();
     _userApiService = UserApiService(client: _cookieClient);
+    _friendApiService = FriendApiService(client: _cookieClient);
     _photoApiService = PhotoApiService(client: _cookieClient);
     _imagePicker = ImagePicker();
+    _galleryScrollController.addListener(_handleGalleryScroll);
     _restoreSession();
   }
 
   @override
   void dispose() {
+    _galleryScrollController.removeListener(_handleGalleryScroll);
+    _galleryScrollController.dispose();
     _cookieClient.close();
     super.dispose();
   }
@@ -84,8 +99,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _errorMessage = null;
       });
 
-      final accessToken = result.accessToken?.value;
-      if (accessToken == null || accessToken.isEmpty) {
+      final accessToken = result.accessToken.value;
+      if (accessToken.isEmpty) {
         throw Exception('Missing LINE access token');
       }
 
@@ -153,6 +168,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _userId = '';
         _pictureUrl = '';
         _photos = <PhotoResponse>[];
+        _hasMorePhotos = true;
+        _supportsPhotoPagination = true;
+        _isLoadingMorePhotos = false;
+        _isAddingFriend = false;
       });
       _cookieClient.clearCookies();
     } finally {
@@ -175,6 +194,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _photos = <PhotoResponse>[];
         _isLoadingPhotos = false;
         _errorMessage = null;
+        _hasMorePhotos = true;
+        _supportsPhotoPagination = true;
+        _isLoadingMorePhotos = false;
+        _isAddingFriend = false;
       });
       _cookieClient.clearCookies();
     } catch (e) {
@@ -189,24 +212,246 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() {
       _isLoadingPhotos = true;
+      _isLoadingMorePhotos = false;
     });
     try {
-      final photos = await _photoApiService.getPhotos();
+      final photos = await _photoApiService.getPhotos(take: _photosPageSize);
       if (!mounted) return;
+      final bool supportsPagination = photos.length <= _photosPageSize;
       setState(() {
         _photos = photos;
+        _supportsPhotoPagination = supportsPagination;
+        _hasMorePhotos = supportsPagination && photos.length == _photosPageSize;
         _errorMessage = null;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _errorMessage = 'Failed to load photos. Please try again.';
+        _supportsPhotoPagination = true;
+        _hasMorePhotos = true;
       });
     } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingPhotos = false;
+        });
+      }
+    }
+  }
+
+  void _handleGalleryScroll() {
+    if (!_supportsPhotoPagination || !_hasMorePhotos || _isLoadingMorePhotos) {
+      return;
+    }
+    if (!_galleryScrollController.hasClients) {
+      return;
+    }
+    final position = _galleryScrollController.position;
+    if (position.maxScrollExtent - position.pixels <= 120) {
+      _loadMorePhotos();
+    }
+  }
+
+  Future<void> _loadMorePhotos() async {
+    if (!_supportsPhotoPagination || !_hasMorePhotos || _isLoadingMorePhotos) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingMorePhotos = true;
+    });
+
+    final DateTime? beforeCursor =
+        _photos.isNotEmpty ? _photos.last.createdAt.toUtc() : null;
+    final int skip = _photos.length;
+
+    try {
+      final additionalPhotos = await _photoApiService.getPhotos(
+        skip: skip,
+        take: _photosPageSize,
+        before: beforeCursor,
+      );
       if (!mounted) return;
+
+      final Set<String> existingIds =
+          _photos.map((photo) => photo.id).where((id) => id.isNotEmpty).toSet();
+      final List<PhotoResponse> filtered = additionalPhotos.where((photo) {
+        if (photo.id.isEmpty) {
+          return !_photos.any((existing) =>
+              existing.imageUrl == photo.imageUrl &&
+              existing.createdAt == photo.createdAt);
+        }
+        return !existingIds.contains(photo.id);
+      }).toList();
+
       setState(() {
-        _isLoadingPhotos = false;
+        if (filtered.isNotEmpty) {
+          _photos = <PhotoResponse>[..._photos, ...filtered];
+        }
+
+        if (filtered.isEmpty) {
+          _hasMorePhotos = false;
+          if (additionalPhotos.isNotEmpty) {
+            _supportsPhotoPagination = false;
+          }
+        } else if (filtered.length < _photosPageSize) {
+          _hasMorePhotos = false;
+        }
       });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to load older photos right now.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMorePhotos = false;
+        });
+      }
+    }
+  }
+
+  bool get _shouldShowLoadMoreTile =>
+      _supportsPhotoPagination && (_hasMorePhotos || _isLoadingMorePhotos);
+
+  Widget _buildLoadMoreTile() {
+    if (_isLoadingMorePhotos) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    return Align(
+      alignment: Alignment.center,
+      child: OutlinedButton(
+        onPressed: _loadMorePhotos,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.white,
+          side: const BorderSide(color: Colors.white38),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        ),
+        child: const Text('Load older photos'),
+      ),
+    );
+  }
+
+  Future<void> _promptAddFriend() async {
+    String pendingFriendUserId = '';
+    final String? friendUserId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Add friend'),
+          content: TextField(
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'LINE user ID',
+              hintText: 'Uxxxxxxxxxxxxxxxxxxxx',
+            ),
+            onChanged: (value) {
+              pendingFriendUserId = value.trim();
+            },
+            onSubmitted: (value) {
+              pendingFriendUserId = value.trim();
+              Navigator.of(dialogContext).pop(pendingFriendUserId);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                FocusScope.of(dialogContext).unfocus();
+                Navigator.of(dialogContext).pop(pendingFriendUserId);
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (friendUserId == null || friendUserId.isEmpty) {
+      return;
+    }
+
+    await _addFriend(friendUserId);
+  }
+
+  Future<void> _addFriend(String friendUserId) async {
+    if (_isAddingFriend) {
+      return;
+    }
+
+    setState(() {
+      _isAddingFriend = true;
+    });
+
+    try {
+      final friendship = await _friendApiService.createFriendship(
+        friendUserId: friendUserId,
+      );
+      final String otherUserId =
+          friendship.requesterId == _userId ? friendship.addresseeId : friendship.requesterId;
+
+      String message;
+      if (friendship.acceptedFromIncomingRequest || friendship.isAccepted) {
+        message = otherUserId.isNotEmpty
+            ? 'You and $otherUserId are now friends!'
+            : 'Friend request accepted!';
+        await _loadPhotos();
+      } else if (friendship.isPending) {
+        message = otherUserId.isNotEmpty
+            ? 'Friend request sent to $otherUserId.'
+            : 'Friend request sent.';
+      } else {
+        message = 'Friendship updated.';
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } on FriendApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to add friend',
+        name: 'HomeScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to add friend right now.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAddingFriend = false;
+        });
+      }
     }
   }
 
@@ -276,11 +521,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildLoggedInLayout(BuildContext context) {
     final PhotoResponse? latestPhoto =
         _photos.isNotEmpty ? _photos.first : null;
-    final Widget previewWidget = latestPhoto != null
-        ? Image.network(
-            _resolvePhotoUrl(latestPhoto.imageUrl),
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _buildPreviewPlaceholder(),
+    final Widget previewWidget = _photos.isNotEmpty
+        ? _PhotoFeedPreview(
+            photos: _photos,
+            resolvePhotoUrl: _resolvePhotoUrl,
+            onLoadMore: _loadMorePhotos,
+            hasMore: _supportsPhotoPagination && _hasMorePhotos,
+            isLoadingMore: _isLoadingMorePhotos,
           )
         : _buildPreviewPlaceholder();
     final ImageProvider? historyImage = latestPhoto != null
@@ -288,8 +535,13 @@ class _HomeScreenState extends State<HomeScreen> {
         : null;
     final ImageProvider? avatarImage =
         _pictureUrl.isNotEmpty ? NetworkImage(_pictureUrl) : null;
-    final int rawCount = _photos.length;
-    final int cappedCount = rawCount > 999 ? 999 : rawCount;
+    final Set<String> uniqueUploaders = _photos
+        .map((photo) => photo.uploaderId)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+      ..remove(_userId);
+    final int friendCount = uniqueUploaders.length;
+    final int cappedCount = friendCount > 999 ? 999 : friendCount;
     final String friendsLabel =
         '$cappedCount Friend${cappedCount == 1 ? '' : 's'}';
 
@@ -402,15 +654,52 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(
                   height: MediaQuery.of(modalContext).size.height * 0.45,
                   child: ListView.separated(
-                    itemCount: _photos.length,
+                    controller: _galleryScrollController,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: _photos.length + (_shouldShowLoadMoreTile ? 1 : 0),
                     separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (_, index) {
+                      if (_shouldShowLoadMoreTile && index >= _photos.length) {
+                        return _buildLoadMoreTile();
+                      }
                       final photo = _photos[index];
                       return _PhotoListTile(photo: photo);
                     },
                   ),
                 ),
               ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showFriendRequests() {
+    if (_userId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Login to manage friend requests.')),
+      );
+      return;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0F1F39),
+      builder: (modalContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: SizedBox(
+              height: MediaQuery.of(modalContext).size.height * 0.65,
+              child: _FriendRequestsSheet(
+                friendApiService: _friendApiService,
+                currentUserId: _userId,
+                onFriendshipUpdated: () {
+                  _loadPhotos();
+                },
+              ),
             ),
           ),
         );
@@ -454,6 +743,26 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.people_alt_outlined, color: Colors.white),
+                title:
+                    const Text('Friend requests', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.of(modalContext).pop();
+                  _showFriendRequests();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_add_alt_1, color: Colors.white),
+                title: const Text('Add friend', style: TextStyle(color: Colors.white)),
+                enabled: !_isAddingFriend,
+                onTap: _isAddingFriend
+                    ? null
+                    : () {
+                        Navigator.of(modalContext).pop();
+                        _promptAddFriend();
+                      },
+              ),
+              ListTile(
                 leading: const Icon(Icons.logout, color: Colors.redAccent),
                 title: const Text(
                   'Logout',
@@ -470,6 +779,621 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+  }
+}
+
+
+class _FriendRequestsSheet extends StatefulWidget {
+  const _FriendRequestsSheet({
+    required this.friendApiService,
+    required this.currentUserId,
+    required this.onFriendshipUpdated,
+  });
+
+  final FriendApiService friendApiService;
+  final String currentUserId;
+  final VoidCallback onFriendshipUpdated;
+
+  @override
+  State<_FriendRequestsSheet> createState() => _FriendRequestsSheetState();
+}
+
+class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
+  FriendshipPendingDirection _direction = FriendshipPendingDirection.incoming;
+  List<FriendshipResponse> _requests = <FriendshipResponse>[];
+  bool _isLoading = true;
+  String? _errorMessage;
+  String? _activeFriendshipId;
+  bool _isActiveActionAccept = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRequests();
+  }
+
+  Future<void> _loadRequests() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    try {
+      final requests = await widget.friendApiService.getPendingFriendships(
+        direction: _direction,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _requests = requests;
+      });
+    } on FriendApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.message;
+      });
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to load pending friendships',
+        name: 'FriendRequestsSheet',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = 'Unable to load friend requests right now.';
+      });
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _handleDecision({
+    required FriendshipResponse friendship,
+    required bool accept,
+  }) async {
+    setState(() {
+      _activeFriendshipId = friendship.id;
+      _isActiveActionAccept = accept;
+    });
+
+    try {
+      final updated = accept
+          ? await widget.friendApiService.acceptFriendship(friendship.id)
+          : await widget.friendApiService.denyFriendship(friendship.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _requests = _requests
+            .where((request) => request.id != updated.id)
+            .toList(growable: false);
+      });
+
+      widget.onFriendshipUpdated();
+
+      final String message = accept
+          ? 'Friend request accepted.'
+          : 'Friend request declined.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } on FriendApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to ${accept ? 'accept' : 'deny'} friendship',
+        name: 'FriendRequestsSheet',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accept
+                ? 'Unable to accept this request right now.'
+                : 'Unable to decline this request right now.',
+          ),
+        ),
+      );
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _activeFriendshipId = null;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(
+          child: Container(
+            width: 48,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white24,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Friend Requests',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildFilterRow(),
+        const SizedBox(height: 16),
+        Expanded(
+          child: _buildContent(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFilterRow() {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      alignment: WrapAlignment.center,
+      children: FriendshipPendingDirection.values.map((direction) {
+        final bool isSelected = direction == _direction;
+        return ChoiceChip(
+          label: Text(
+            direction.label,
+            style: TextStyle(
+              color: isSelected ? Colors.black87 : Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          selected: isSelected,
+          selectedColor: Colors.white,
+          backgroundColor: Colors.white12,
+          onSelected: (bool selected) {
+            if (!selected || direction == _direction) {
+              return;
+            }
+            setState(() {
+              _direction = direction;
+            });
+            _loadRequests();
+          },
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildContent() {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            _errorMessage!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: _loadRequests,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white38),
+            ),
+            child: const Text('Try again'),
+          ),
+        ],
+      );
+    }
+
+    if (_requests.isEmpty) {
+      return const Center(
+        child: Text(
+          'No pending requests.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      physics: const BouncingScrollPhysics(),
+      itemCount: _requests.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (_, index) {
+        final friendship = _requests[index];
+        return _FriendRequestTile(
+          friendship: friendship,
+          currentUserId: widget.currentUserId,
+          onDecision: _handleDecision,
+          isProcessing: _activeFriendshipId == friendship.id,
+          processingAccept: _isActiveActionAccept,
+        );
+      },
+    );
+  }
+}
+
+class _FriendRequestTile extends StatelessWidget {
+  const _FriendRequestTile({
+    required this.friendship,
+    required this.currentUserId,
+    required this.onDecision,
+    required this.isProcessing,
+    required this.processingAccept,
+  });
+
+  final FriendshipResponse friendship;
+  final String currentUserId;
+  final Future<void> Function({
+    required FriendshipResponse friendship,
+    required bool accept,
+  }) onDecision;
+  final bool isProcessing;
+  final bool processingAccept;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isIncoming = friendship.isAddressee(currentUserId);
+    final String otherUserId = friendship.isRequester(currentUserId)
+        ? friendship.addresseeId
+        : friendship.requesterId;
+    final String headline =
+        isIncoming ? 'Request from $otherUserId' : 'Awaiting $otherUserId';
+    final String subtitle = isIncoming
+        ? 'You can accept or decline this request.'
+        : 'Pending response from $otherUserId.';
+    final DateTime createdAtLocal = friendship.createdAt.toLocal();
+
+    final bool showActions = isIncoming && friendship.isPending;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            headline,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Requested at: $createdAtLocal',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          if (showActions) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: isProcessing
+                        ? null
+                        : () => onDecision(
+                              friendship: friendship,
+                              accept: false,
+                            ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white38),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: isProcessing && !processingAccept
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Decline'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: isProcessing
+                        ? null
+                        : () => onDecision(
+                              friendship: friendship,
+                              accept: true,
+                            ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: isProcessing && processingAccept
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Accept'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PhotoFeedPreview extends StatefulWidget {
+  const _PhotoFeedPreview({
+    required this.photos,
+    required this.resolvePhotoUrl,
+    required this.onLoadMore,
+    required this.hasMore,
+    required this.isLoadingMore,
+  });
+
+  final List<PhotoResponse> photos;
+  final String Function(String url) resolvePhotoUrl;
+  final Future<void> Function() onLoadMore;
+  final bool hasMore;
+  final bool isLoadingMore;
+
+  @override
+  State<_PhotoFeedPreview> createState() => _PhotoFeedPreviewState();
+}
+
+class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
+  late final PageController _controller;
+  int _currentIndex = 0;
+  String? _lastFirstPhotoId;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController();
+    _lastFirstPhotoId =
+        widget.photos.isNotEmpty ? widget.photos.first.id : null;
+  }
+
+  @override
+  void didUpdateWidget(covariant _PhotoFeedPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.photos.isEmpty) {
+      _lastFirstPhotoId = null;
+      if (_currentIndex != 0) {
+        _currentIndex = 0;
+        _scheduleUiUpdate();
+      }
+      return;
+    }
+
+    final String? newFirstId =
+        widget.photos.isNotEmpty ? widget.photos.first.id : null;
+    if (newFirstId != null && newFirstId != _lastFirstPhotoId) {
+      _lastFirstPhotoId = newFirstId;
+      if (_controller.hasClients) {
+        _controller.jumpToPage(0);
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_controller.hasClients) {
+            return;
+          }
+          _controller.jumpToPage(0);
+        });
+      }
+      if (_currentIndex != 0) {
+        _currentIndex = 0;
+        _scheduleUiUpdate();
+      }
+      return;
+    }
+
+    if (_currentIndex >= widget.photos.length) {
+      final int newIndex = widget.photos.length - 1;
+      if (newIndex < 0) {
+        return;
+      }
+      if (_controller.hasClients) {
+        _controller.jumpToPage(newIndex);
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_controller.hasClients) {
+            return;
+          }
+          _controller.jumpToPage(newIndex);
+        });
+      }
+      if (_currentIndex != newIndex) {
+        _currentIndex = newIndex;
+        _scheduleUiUpdate();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.photos.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final int safeIndex =
+        _currentIndex.clamp(0, widget.photos.length - 1);
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PageView.builder(
+          controller: _controller,
+          scrollDirection: Axis.vertical,
+          physics: const BouncingScrollPhysics(),
+          itemCount: widget.photos.length,
+          onPageChanged: (index) {
+            setState(() {
+              _currentIndex = index;
+            });
+            _maybeLoadMore(index);
+          },
+          itemBuilder: (_, index) {
+            final photo = widget.photos[index];
+            final String imageUrl = widget.resolvePhotoUrl(photo.imageUrl);
+            return Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: Colors.white10,
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.broken_image,
+                  color: Colors.white70,
+                  size: 48,
+                ),
+              ),
+            );
+          },
+        ),
+        Positioned(
+          top: 16,
+          right: 16,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Text(
+                '${safeIndex + 1}/${widget.photos.length}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: _buildCaptionOverlay(widget.photos[safeIndex]),
+        ),
+        if (widget.isLoadingMore && widget.hasMore)
+          const Positioned(
+            bottom: 12,
+            right: 16,
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _maybeLoadMore(int index) {
+    if (!widget.hasMore || widget.isLoadingMore) {
+      return;
+    }
+    if (index >= widget.photos.length - 2) {
+      widget.onLoadMore();
+    }
+  }
+
+  Widget _buildCaptionOverlay(PhotoResponse photo) {
+    final String caption =
+        photo.caption?.trim().isNotEmpty == true ? photo.caption!.trim() : 'No caption';
+    final String uploader =
+        photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown uploader';
+    final DateTime localTime = photo.createdAt.toLocal();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.transparent, Colors.black87],
+          stops: [0.0, 1.0],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            caption,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '$uploader • $localTime',
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _scheduleUiUpdate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+    });
   }
 }
 
@@ -538,10 +1462,13 @@ class _PhotoListTile extends StatelessWidget {
     final String imageUrl = _resolvePhotoUrl(photo.imageUrl);
     final String caption =
         photo.caption?.isNotEmpty == true ? photo.caption! : 'No caption';
+    final String uploader =
+        photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown';
+    final DateTime uploadedAt = photo.createdAt.toLocal();
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
+        color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
       ),
       child: ListTile(
@@ -570,7 +1497,7 @@ class _PhotoListTile extends StatelessWidget {
           ),
         ),
         subtitle: Text(
-          'Uploaded: ${photo.createdAt.toLocal()}',
+          '$uploader • $uploadedAt',
           style: const TextStyle(color: Colors.white54, fontSize: 12),
         ),
       ),

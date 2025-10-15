@@ -39,6 +39,7 @@ dependencies:
   http: ^1.2.1
   camera: ^0.11.0+1
   mime: ^1.0.5
+  http_parser: ^4.0.2
   image_picker: ^1.1.1
 
 dev_dependencies:

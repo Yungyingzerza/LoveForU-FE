@@ -114,10 +114,11 @@ class _UploadScreenState extends State<UploadScreen> {
         _errorMessage = 'Failed to capture photo. Please try again.';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isCapturing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isCapturing = false;
+        });
+      }
     }
   }
 
@@ -146,10 +147,11 @@ class _UploadScreenState extends State<UploadScreen> {
         _errorMessage = 'Upload failed. Please try again.';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isUploading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
     }
   }
 

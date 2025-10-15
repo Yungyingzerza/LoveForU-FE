@@ -50,19 +50,30 @@ class CameraCaptureScreen extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white24, width: 2),
-            ),
-            child: CircleAvatar(
-              backgroundColor: Colors.white24,
-              backgroundImage: avatarImage,
-              child: avatarImage == null
-                  ? const Icon(Icons.person_outline, color: Colors.white)
-                  : null,
+          Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () {
+                debugPrint('Profile');
+                onMessages();
+              },
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white24, width: 2),
+                ),
+                child: CircleAvatar(
+                  backgroundColor: Colors.white24,
+                  backgroundImage: avatarImage,
+                  child: avatarImage == null
+                      ? const Icon(Icons.person_outline, color: Colors.white)
+                      : null,
+                ),
+              ),
             ),
           ),
           Container(
