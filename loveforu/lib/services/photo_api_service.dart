@@ -124,6 +124,36 @@ class PhotoApiService {
     final Map<String, dynamic> body = jsonDecode(response.body);
     return PhotoResponse.fromJson(body);
   }
+
+  Future<void> deletePhoto(String id) async {
+    if (id.trim().isEmpty) {
+      throw ArgumentError.value(id, 'id', 'Photo id must not be empty');
+    }
+
+    final uri = Uri.parse('$_baseUrl/api/Photo/$id');
+    developer.log('DELETE $uri', name: 'PhotoApiService');
+    final response = await _client.delete(uri);
+
+    if (response.statusCode == 204) {
+      developer.log('DELETE /api/Photo/$id success', name: 'PhotoApiService');
+      return;
+    }
+
+    if (response.statusCode == 404) {
+      throw PhotoApiException('Photo not found.');
+    }
+
+    if (response.statusCode == 403) {
+      throw PhotoApiException('You cannot delete this photo.');
+    }
+
+    developer.log(
+      'DELETE /api/Photo/$id failed ${response.statusCode}: ${response.body}',
+      name: 'PhotoApiService',
+      level: 1000,
+    );
+    throw PhotoApiException('Failed to delete photo: ${response.statusCode}');
+  }
 }
 
 class PhotoResponse {

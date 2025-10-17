@@ -39,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isAddingFriend = false;
   PhotoResponse? _activePreviewPhoto;
   bool _isReplyingWithPhoto = false;
+  String? _deletingPhotoId;
 
   late final CookieHttpClient _cookieClient;
   late final UserApiService _userApiService;
@@ -295,8 +296,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (currentId == newId) {
       return;
     }
-    setState(() {
-      _activePreviewPhoto = photo;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _activePreviewPhoto = photo;
+      });
     });
   }
 
@@ -500,9 +506,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildLoggedInLayout(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final double availableHeight = constraints.maxHeight.isFinite
-            ? constraints.maxHeight
-            : MediaQuery.of(context).size.height;
         final List<PhotoResponse> visiblePhotos = _currentPhotos();
         final PhotoResponse? latestPhoto =
             visiblePhotos.isNotEmpty ? visiblePhotos.first : null;
@@ -513,11 +516,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 : _selectedFriendUserId == _userId
                     ? 'You have not shared a photo yet.'
                     : 'No photos from $friendFilterLabel yet.';
+        final bool canPullToRefresh = _activePreviewPhoto == null ||
+            (visiblePhotos.isNotEmpty &&
+                _activePreviewPhoto!.id == visiblePhotos.first.id);
         final Widget previewWidget = visiblePhotos.isNotEmpty
             ? _PhotoFeedPreview(
                 photos: visiblePhotos,
                 resolvePhotoUrl: _resolvePhotoUrl,
                 onActivePhotoChanged: _handleActivePhotoChanged,
+                onRefresh: _refreshHome,
+                enableRefresh: canPullToRefresh,
               )
             : _buildPreviewPlaceholder(message: placeholderMessage);
         final ImageProvider? historyImage = latestPhoto != null
@@ -557,46 +565,33 @@ class _HomeScreenState extends State<HomeScreen> {
           replyAction = () => _replyWithPhoto(photoForReply, friendForReply);
         }
 
-        return RefreshIndicator(
-          onRefresh: _refreshHome,
-          color: Colors.white,
-          backgroundColor: const Color(0xFF0F1F39),
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: availableHeight),
-              child: Column(
-                children: [
-                  SizedBox(
-                    height: availableHeight,
-                    child: CameraCaptureScreen(
-                      avatarImage: avatarImage,
-                      friendsLabel: friendsLabel,
-                      preview: previewWidget,
-                      onProfile: _showUserMenu,
-                      onMessages: _openChatThreads,
-                      historyImage: historyImage,
-                      onGallery: _pickImageFromGallery,
-                      onShutter:
-                          _isLoadingPhotos ? null : _openUploadScreen,
-                      onReplyWithPhoto: replyAction,
-                      onHistory: () => _showGallery(context),
-                      onFriendFilter: _showFriendFilter,
-                    ),
-                  ),
-                  if (_errorMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12, bottom: 8),
-                      child: Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
-                    ),
-                ],
+        return Column(
+          children: [
+            Expanded(
+              child: CameraCaptureScreen(
+                avatarImage: avatarImage,
+                friendsLabel: friendsLabel,
+                preview: previewWidget,
+                onProfile: _showUserMenu,
+                onMessages: _openChatThreads,
+                historyImage: historyImage,
+                onGallery: _pickImageFromGallery,
+                onShutter: _isLoadingPhotos ? null : _openUploadScreen,
+                onReplyWithPhoto: replyAction,
+                onHistory: () => _showGallery(context),
+                onFriendFilter: _showFriendFilter,
               ),
             ),
-          ),
+            if (_errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12, bottom: 8),
+                child: Text(
+                  _errorMessage!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              ),
+          ],
         );
       },
     );
@@ -701,7 +696,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (_, index) {
                       final photo = visiblePhotos[index];
-                      return _PhotoListTile(photo: photo);
+                      final bool canDelete =
+                          _userId.isNotEmpty && photo.uploaderId == _userId;
+                      return _PhotoListTile(
+                        photo: photo,
+                        canDelete: canDelete,
+                        isDeleting: _deletingPhotoId == photo.id,
+                        onDelete: canDelete
+                            ? () => _deletePhoto(photo, modalContext)
+                            : null,
+                      );
                     },
                   ),
                 ),
@@ -958,6 +962,105 @@ class _HomeScreenState extends State<HomeScreen> {
       controller.dispose();
     });
     return result;
+  }
+
+  Future<void> _deletePhoto(
+    PhotoResponse photo,
+    BuildContext modalContext,
+  ) async {
+    if (_deletingPhotoId != null) {
+      return;
+    }
+
+    final bool confirm = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF0F1F39),
+              title: const Text(
+                'Delete photo?',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              content: const Text(
+                'This removes the photo for everyone and detaches it from chats.',
+                style: TextStyle(color: Colors.white70),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Delete'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!confirm) {
+      return;
+    }
+
+    setState(() {
+      _deletingPhotoId = photo.id;
+    });
+
+    try {
+      await _photoApiService.deletePhoto(photo.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _photos = _photos.where((p) => p.id != photo.id).toList();
+        if (_activePreviewPhoto?.id == photo.id) {
+          final updated = _currentPhotos();
+          _activePreviewPhoto =
+              updated.isNotEmpty ? updated.first : null;
+        }
+        _deletingPhotoId = null;
+      });
+
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(modalContext).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photo removed.')),
+      );
+    } on PhotoApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deletingPhotoId = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to delete photo',
+        name: 'HomeScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deletingPhotoId = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to delete photo right now.')),
+      );
+    }
   }
 
   Future<void> _openChatThreads() async {
@@ -1728,11 +1831,15 @@ class _PhotoFeedPreview extends StatefulWidget {
     required this.photos,
     required this.resolvePhotoUrl,
     this.onActivePhotoChanged,
+    this.onRefresh,
+    this.enableRefresh = false,
   });
 
   final List<PhotoResponse> photos;
   final String Function(String url) resolvePhotoUrl;
   final ValueChanged<PhotoResponse?>? onActivePhotoChanged;
+  final Future<void> Function()? onRefresh;
+  final bool enableRefresh;
 
   @override
   State<_PhotoFeedPreview> createState() => _PhotoFeedPreviewState();
@@ -1751,7 +1858,6 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
         widget.photos.isNotEmpty ? widget.photos.first.id : null;
     _notifyActivePhoto(
       widget.photos.isNotEmpty ? widget.photos.first : null,
-      schedule: true,
     );
   }
 
@@ -1833,14 +1939,18 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
 
     final int safeIndex =
         _currentIndex.clamp(0, widget.photos.length - 1);
-
-    return Stack(
+    final bool refreshEnabled = widget.enableRefresh && widget.onRefresh != null;
+    Widget content = Stack(
       fit: StackFit.expand,
       children: [
         PageView.builder(
           controller: _controller,
           scrollDirection: Axis.vertical,
-          physics: const BouncingScrollPhysics(),
+          physics: refreshEnabled
+              ? const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                )
+              : const PageScrollPhysics(),
           itemCount: widget.photos.length,
           onPageChanged: (index) {
             setState(() {
@@ -1896,6 +2006,23 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
         ),
       ],
     );
+
+    if (refreshEnabled) {
+      content = RefreshIndicator(
+        onRefresh: widget.onRefresh!,
+        color: Colors.white,
+        backgroundColor: const Color(0xFF0F1F39),
+        child: NotificationListener<OverscrollIndicatorNotification>(
+          onNotification: (notification) {
+            notification.disallowIndicator();
+            return false;
+          },
+          child: content,
+        ),
+      );
+    }
+
+    return content;
   }
 
   Widget _buildCaptionOverlay(PhotoResponse photo) {
@@ -1948,21 +2075,19 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
     });
   }
 
-  void _notifyActivePhoto(PhotoResponse? photo, {bool schedule = false}) {
+  void _notifyActivePhoto(PhotoResponse? photo) {
     final callback = widget.onActivePhotoChanged;
     if (callback == null) {
       return;
     }
-    if (schedule) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) {
-          return;
-        }
-        callback(photo);
-      });
-      return;
+    void invoke() {
+      if (!mounted) {
+        return;
+      }
+      callback(photo);
     }
-    callback(photo);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => invoke());
   }
 }
 
@@ -2022,9 +2147,17 @@ class _LoginPlaceholder extends StatelessWidget {
 }
 
 class _PhotoListTile extends StatelessWidget {
-  const _PhotoListTile({required this.photo});
+  const _PhotoListTile({
+    required this.photo,
+    this.canDelete = false,
+    this.isDeleting = false,
+    this.onDelete,
+  });
 
   final PhotoResponse photo;
+  final bool canDelete;
+  final bool isDeleting;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -2071,6 +2204,22 @@ class _PhotoListTile extends StatelessWidget {
           '$uploader • $uploadLabel',
           style: const TextStyle(color: Colors.white54, fontSize: 12),
         ),
+        trailing: canDelete
+            ? (isDeleting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.white70),
+                    tooltip: 'Delete photo',
+                    onPressed: onDelete,
+                  ))
+            : null,
       ),
     );
   }
