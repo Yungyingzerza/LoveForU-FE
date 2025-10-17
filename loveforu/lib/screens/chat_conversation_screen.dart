@@ -232,6 +232,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     final friendName = widget.thread.friendDisplayName.isNotEmpty
         ? widget.thread.friendDisplayName
         : widget.thread.friendUserId;
+    final resolvedFriendAvatar = widget.thread.friendPictureUrl.isNotEmpty
+        ? widget.chatApiService.resolvePhotoUrl(widget.thread.friendPictureUrl)
+        : '';
 
     return PopScope(
       canPop: false,
@@ -252,10 +255,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
               CircleAvatar(
                 radius: 18,
                 backgroundColor: Colors.white24,
-                backgroundImage: widget.thread.friendPictureUrl.isNotEmpty
-                    ? NetworkImage(widget.thread.friendPictureUrl)
+                backgroundImage: resolvedFriendAvatar.isNotEmpty
+                    ? NetworkImage(resolvedFriendAvatar)
                     : null,
-                child: widget.thread.friendPictureUrl.isEmpty
+                child: resolvedFriendAvatar.isEmpty
                     ? const Icon(Icons.person_outline, color: Colors.white)
                     : null,
               ),
@@ -335,17 +338,16 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       itemBuilder: (context, index) {
         final message = _messages[index];
         final isSelf = message.senderId == widget.currentUserId;
-        final showAvatar = !isSelf &&
-            (index == 0 ||
-                _messages[index - 1].senderId != message.senderId);
         final showTimestamp = index == _messages.length - 1 ||
             _messages[index + 1].senderId != message.senderId;
+        final avatarUrl = message.senderPictureUrl.isNotEmpty
+            ? message.senderPictureUrl
+            : widget.thread.friendPictureUrl;
         return _MessageBubble(
           message: message,
           isSelf: isSelf,
-          showAvatar: showAvatar,
           showTimestamp: showTimestamp,
-          friendAvatarUrl: widget.thread.friendPictureUrl,
+          senderAvatarUrl: avatarUrl,
           photoResolver: widget.chatApiService.resolvePhotoUrl,
         );
       },
@@ -417,17 +419,15 @@ class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
     required this.isSelf,
-    required this.showAvatar,
     required this.showTimestamp,
-    required this.friendAvatarUrl,
+    required this.senderAvatarUrl,
     required this.photoResolver,
   });
 
   final ChatMessageDto message;
   final bool isSelf;
-  final bool showAvatar;
   final bool showTimestamp;
-  final String friendAvatarUrl;
+  final String senderAvatarUrl;
   final String Function(String) photoResolver;
 
   @override
@@ -445,13 +445,12 @@ class _MessageBubble extends StatelessWidget {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           );
-
     return Padding(
       padding: EdgeInsets.only(
         top: 8,
         bottom: showTimestamp ? 12 : 4,
-        left: isSelf ? 48 : (showAvatar ? 0 : 48),
-        right: isSelf ? (showAvatar ? 0 : 48) : 48,
+        left: isSelf ? 60 : 16,
+        right: isSelf ? 16 : 60,
       ),
       child: Column(
         crossAxisAlignment: alignment,
@@ -461,19 +460,6 @@ class _MessageBubble extends StatelessWidget {
                 isSelf ? MainAxisAlignment.end : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (!isSelf && showAvatar)
-                CircleAvatar(
-                  radius: 14,
-                  backgroundColor: Colors.white24,
-                  backgroundImage: friendAvatarUrl.isNotEmpty
-                      ? NetworkImage(friendAvatarUrl)
-                      : null,
-                  child: friendAvatarUrl.isEmpty
-                      ? const Icon(Icons.person_outline,
-                          size: 16, color: Colors.white)
-                      : null,
-                ),
-              if (!isSelf) const SizedBox(width: 8),
               Flexible(
                 child: Container(
                   padding:
@@ -484,9 +470,8 @@ class _MessageBubble extends StatelessWidget {
                       topLeft: const Radius.circular(18),
                       topRight: const Radius.circular(18),
                       bottomLeft:
-                          Radius.circular(isSelf ? 18 : (showAvatar ? 6 : 18)),
-                      bottomRight:
-                          Radius.circular(isSelf ? (showAvatar ? 6 : 18) : 18),
+                          Radius.circular(isSelf ? 18 : 18),
+                      bottomRight: Radius.circular(isSelf ? 18 : 18),
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -509,8 +494,8 @@ class _MessageBubble extends StatelessWidget {
             Padding(
               padding: EdgeInsets.only(
                 top: 6,
-                left: isSelf ? 0 : (showAvatar ? 40 : 0),
-                right: isSelf ? (showAvatar ? 40 : 0) : 0,
+                left: isSelf ? 0 : 0,
+                right: isSelf ? 0 : 0,
               ),
               child: Text(
                 _formatTimestamp(context, message.createdAt),
