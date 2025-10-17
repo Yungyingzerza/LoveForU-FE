@@ -1162,6 +1162,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   _userId,
                   style: const TextStyle(color: Colors.white54),
                 ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.copy, color: Colors.white70),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: _userId));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('User ID copied to clipboard'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  tooltip: 'Copy User ID',
+                ),
               ),
               ListTile(
                 leading: const Icon(
