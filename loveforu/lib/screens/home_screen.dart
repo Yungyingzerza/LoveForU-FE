@@ -1905,6 +1905,7 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
         ? photo.uploaderDisplayName
         : (photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown uploader');
     final DateTime localTime = photo.createdAt.toLocal();
+    final String timeLabel = _formatElapsedTime(localTime);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -1930,7 +1931,7 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
           ),
           const SizedBox(height: 6),
           Text(
-            '$uploader • $localTime',
+            '$uploader • $timeLabel',
             style: const TextStyle(color: Colors.white70),
           ),
         ],
@@ -2034,6 +2035,7 @@ class _PhotoListTile extends StatelessWidget {
         ? photo.uploaderDisplayName
         : (photo.uploaderId.isNotEmpty ? photo.uploaderId : 'Unknown');
     final DateTime uploadedAt = photo.createdAt.toLocal();
+    final String uploadLabel = _formatElapsedTime(uploadedAt);
 
     return Container(
       decoration: BoxDecoration(
@@ -2066,7 +2068,7 @@ class _PhotoListTile extends StatelessWidget {
           ),
         ),
         subtitle: Text(
-          '$uploader • $uploadedAt',
+          '$uploader • $uploadLabel',
           style: const TextStyle(color: Colors.white54, fontSize: 12),
         ),
       ),
@@ -2083,4 +2085,53 @@ String _resolvePhotoUrl(String url) {
     return url;
   }
   return '$base$url';
+}
+
+String _formatElapsedTime(DateTime timestamp) {
+  final now = DateTime.now();
+  final difference = now.difference(timestamp);
+
+  if (difference.inSeconds < 60) {
+    final seconds = difference.inSeconds.clamp(1, 59);
+    return seconds == 1 ? '1 sec ago' : '$seconds secs ago';
+  }
+  if (difference.inMinutes < 60) {
+    final minutes = difference.inMinutes;
+    return minutes == 1 ? '1 min ago' : '$minutes mins ago';
+  }
+  if (difference.inHours < 24) {
+    final hours = difference.inHours;
+    return hours == 1 ? '1 hour ago' : '$hours hours ago';
+  }
+  if (difference.inDays == 1) {
+    return 'Yesterday';
+  }
+  if (difference.inDays < 7) {
+    return '${difference.inDays} days ago';
+  }
+
+  final DateTime local = timestamp.toLocal();
+  final String month = _monthName(local.month);
+  return '$month ${local.day}, ${local.year}';
+}
+
+String _monthName(int month) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ];
+  if (month < 1 || month > months.length) {
+    return '';
+  }
+  return months[month - 1];
 }
