@@ -23,8 +23,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const int _photosPageSize = 20;
-
   String _pictureUrl = '';
   String _displayName = '';
   String _userId = '';
@@ -35,11 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<PhotoResponse> _photos = <PhotoResponse>[];
   List<FriendListItem> _friends = <FriendListItem>[];
   String? _selectedFriendUserId;
-  bool _hasMorePhotos = true;
-  bool _supportsPhotoPagination = true;
-  bool _isLoadingMorePhotos = false;
   bool _isAddingFriend = false;
-  final ScrollController _galleryScrollController = ScrollController();
 
   late final CookieHttpClient _cookieClient;
   late final UserApiService _userApiService;
@@ -55,14 +49,11 @@ class _HomeScreenState extends State<HomeScreen> {
     _friendApiService = FriendApiService(client: _cookieClient);
     _photoApiService = PhotoApiService(client: _cookieClient);
     _imagePicker = ImagePicker();
-    _galleryScrollController.addListener(_handleGalleryScroll);
     _restoreSession();
   }
 
   @override
   void dispose() {
-    _galleryScrollController.removeListener(_handleGalleryScroll);
-    _galleryScrollController.dispose();
     _cookieClient.close();
     super.dispose();
   }
@@ -176,9 +167,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _photos = <PhotoResponse>[];
         _friends = <FriendListItem>[];
         _selectedFriendUserId = null;
-        _hasMorePhotos = true;
-        _supportsPhotoPagination = true;
-        _isLoadingMorePhotos = false;
         _isAddingFriend = false;
       });
       _cookieClient.clearCookies();
@@ -204,9 +192,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectedFriendUserId = null;
         _isLoadingPhotos = false;
         _errorMessage = null;
-        _hasMorePhotos = true;
-        _supportsPhotoPagination = true;
-        _isLoadingMorePhotos = false;
         _isAddingFriend = false;
       });
       _cookieClient.clearCookies();
@@ -222,24 +207,18 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() {
       _isLoadingPhotos = true;
-      _isLoadingMorePhotos = false;
     });
     try {
-      final photos = await _photoApiService.getPhotos(take: _photosPageSize);
+      final photos = await _photoApiService.getPhotos();
       if (!mounted) return;
-      final bool supportsPagination = photos.length <= _photosPageSize;
       setState(() {
         _photos = photos;
-        _supportsPhotoPagination = supportsPagination;
-        _hasMorePhotos = supportsPagination && photos.length == _photosPageSize;
         _errorMessage = null;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _errorMessage = 'Failed to load photos. Please try again.';
-        _supportsPhotoPagination = true;
-        _hasMorePhotos = true;
       });
     } finally {
       if (mounted) {
@@ -307,110 +286,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     return selectedId;
-  }
-
-  void _handleGalleryScroll() {
-    if (!_supportsPhotoPagination || !_hasMorePhotos || _isLoadingMorePhotos) {
-      return;
-    }
-    if (!_galleryScrollController.hasClients) {
-      return;
-    }
-    final position = _galleryScrollController.position;
-    if (position.maxScrollExtent - position.pixels <= 120) {
-      _loadMorePhotos();
-    }
-  }
-
-  Future<void> _loadMorePhotos() async {
-    if (!_supportsPhotoPagination || !_hasMorePhotos || _isLoadingMorePhotos) {
-      return;
-    }
-
-    setState(() {
-      _isLoadingMorePhotos = true;
-    });
-
-    final DateTime? beforeCursor =
-        _photos.isNotEmpty ? _photos.last.createdAt.toUtc() : null;
-    final int skip = _photos.length;
-
-    try {
-      final additionalPhotos = await _photoApiService.getPhotos(
-        skip: skip,
-        take: _photosPageSize,
-        before: beforeCursor,
-      );
-      if (!mounted) return;
-
-      final Set<String> existingIds =
-          _photos.map((photo) => photo.id).where((id) => id.isNotEmpty).toSet();
-      final List<PhotoResponse> filtered = additionalPhotos.where((photo) {
-        if (photo.id.isEmpty) {
-          return !_photos.any((existing) =>
-              existing.imageUrl == photo.imageUrl &&
-              existing.createdAt == photo.createdAt);
-        }
-        return !existingIds.contains(photo.id);
-      }).toList();
-
-      setState(() {
-        if (filtered.isNotEmpty) {
-          _photos = <PhotoResponse>[..._photos, ...filtered];
-        }
-
-        if (filtered.isEmpty) {
-          _hasMorePhotos = false;
-          if (additionalPhotos.isNotEmpty) {
-            _supportsPhotoPagination = false;
-          }
-        } else if (filtered.length < _photosPageSize) {
-          _hasMorePhotos = false;
-        }
-      });
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to load older photos right now.')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoadingMorePhotos = false;
-        });
-      }
-    }
-  }
-
-  bool get _shouldShowLoadMoreTile =>
-      _supportsPhotoPagination && (_hasMorePhotos || _isLoadingMorePhotos);
-
-  Widget _buildLoadMoreTile() {
-    if (_isLoadingMorePhotos) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 16),
-        child: Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
-
-    return Align(
-      alignment: Alignment.center,
-      child: OutlinedButton(
-        onPressed: _loadMorePhotos,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.white,
-          side: const BorderSide(color: Colors.white38),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        ),
-        child: const Text('Load older photos'),
-      ),
-    );
   }
 
   Future<void> _promptAddFriend() async {
@@ -531,6 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => UploadScreen(
           photoApiService: _photoApiService,
           initialFile: initialFile,
+          friends: _friends,
         ),
       ),
     );
@@ -603,9 +479,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ? _PhotoFeedPreview(
             photos: visiblePhotos,
             resolvePhotoUrl: _resolvePhotoUrl,
-            onLoadMore: _loadMorePhotos,
-            hasMore: _supportsPhotoPagination && _hasMorePhotos,
-            isLoadingMore: _isLoadingMorePhotos,
           )
         : _buildPreviewPlaceholder(message: placeholderMessage);
     final ImageProvider? historyImage = latestPhoto != null
@@ -738,16 +611,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(
                   height: MediaQuery.of(modalContext).size.height * 0.45,
                   child: ListView.separated(
-                    controller: _galleryScrollController,
                     physics: const BouncingScrollPhysics(),
-                    itemCount:
-                        visiblePhotos.length + (_shouldShowLoadMoreTile ? 1 : 0),
+                    itemCount: visiblePhotos.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (_, index) {
-                      if (_shouldShowLoadMoreTile &&
-                          index >= visiblePhotos.length) {
-                        return _buildLoadMoreTile();
-                      }
                       final photo = visiblePhotos[index];
                       return _PhotoListTile(photo: photo);
                     },
@@ -770,6 +637,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     await _loadFriends();
+
+    if (!mounted) {
+      return;
+    }
 
     final List<_FriendFilterOption> options = <_FriendFilterOption>[
       const _FriendFilterOption(id: null, label: 'Everyone'),
@@ -1618,16 +1489,10 @@ class _PhotoFeedPreview extends StatefulWidget {
   const _PhotoFeedPreview({
     required this.photos,
     required this.resolvePhotoUrl,
-    required this.onLoadMore,
-    required this.hasMore,
-    required this.isLoadingMore,
   });
 
   final List<PhotoResponse> photos;
   final String Function(String url) resolvePhotoUrl;
-  final Future<void> Function() onLoadMore;
-  final bool hasMore;
-  final bool isLoadingMore;
 
   @override
   State<_PhotoFeedPreview> createState() => _PhotoFeedPreviewState();
@@ -1728,7 +1593,6 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
             setState(() {
               _currentIndex = index;
             });
-            _maybeLoadMore(index);
           },
           itemBuilder: (_, index) {
             final photo = widget.photos[index];
@@ -1774,27 +1638,8 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
           right: 0,
           child: _buildCaptionOverlay(widget.photos[safeIndex]),
         ),
-        if (widget.isLoadingMore && widget.hasMore)
-          const Positioned(
-            bottom: 12,
-            right: 16,
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
       ],
     );
-  }
-
-  void _maybeLoadMore(int index) {
-    if (!widget.hasMore || widget.isLoadingMore) {
-      return;
-    }
-    if (index >= widget.photos.length - 2) {
-      widget.onLoadMore();
-    }
   }
 
   Widget _buildCaptionOverlay(PhotoResponse photo) {

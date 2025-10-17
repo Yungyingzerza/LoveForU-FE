@@ -24,31 +24,9 @@ class PhotoApiService {
     return value;
   }
 
-  Future<List<PhotoResponse>> getPhotos({
-    int skip = 0,
-    int? take,
-    DateTime? before,
-  }) async {
-    if (skip < 0) {
-      throw ArgumentError.value(skip, 'skip', 'skip must be greater than or equal to 0');
-    }
-    if (take != null && take <= 0) {
-      throw ArgumentError.value(take, 'take', 'take must be greater than 0 when provided');
-    }
-
-    final Map<String, String> queryParameters = <String, String>{
-      if (skip > 0) 'skip': '$skip',
-      if (take != null) 'take': '$take',
-      if (before != null) 'before': before.toUtc().toIso8601String(),
-    };
-
-    final uri = Uri.parse('$_baseUrl/api/Photo').replace(
-      queryParameters: queryParameters.isEmpty ? null : queryParameters,
-    );
-    developer.log(
-      'GET $uri (skip=$skip, take=${take ?? 'all'}, before=${before?.toUtc().toIso8601String() ?? 'none'})',
-      name: 'PhotoApiService',
-    );
+  Future<List<PhotoResponse>> getPhotos() async {
+    final uri = Uri.parse('$_baseUrl/api/Photo');
+    developer.log('GET $uri', name: 'PhotoApiService');
     final response = await _client.get(uri);
     if (response.statusCode != 200) {
       developer.log(
@@ -84,7 +62,11 @@ class PhotoApiService {
     return PhotoResponse.fromJson(body);
   }
 
-  Future<PhotoResponse> uploadPhoto({required File image, String? caption}) async {
+  Future<PhotoResponse> uploadPhoto({
+    required File image,
+    String? caption,
+    List<String>? friendIds,
+  }) async {
     final uri = Uri.parse('$_baseUrl/api/Photo');
     developer.log('POST $uri', name: 'PhotoApiService');
     final contentTypeString = lookupMimeType(image.path);
@@ -105,6 +87,25 @@ class PhotoApiService {
 
     if (caption != null && caption.isNotEmpty) {
       request.fields['Caption'] = caption;
+    }
+
+    final List<String>? trimmedFriendIds = friendIds
+        ?.map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (trimmedFriendIds != null && trimmedFriendIds.isNotEmpty) {
+      for (var i = 0; i < trimmedFriendIds.length; i++) {
+        request.fields['FriendIds[$i]'] = trimmedFriendIds[i];
+      }
+      developer.log(
+        'Sharing photo with ${trimmedFriendIds.length} friends',
+        name: 'PhotoApiService',
+      );
+    } else {
+      developer.log(
+        'No FriendIds provided; backend will share with all accepted friends',
+        name: 'PhotoApiService',
+      );
     }
 
     final streamedResponse = await _client.send(request);

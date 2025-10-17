@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
+import 'package:loveforu/services/friend_api_service.dart';
 import 'package:loveforu/services/photo_api_service.dart';
 import 'package:loveforu/theme/app_gradients.dart';
 
@@ -11,10 +12,12 @@ class UploadScreen extends StatefulWidget {
     super.key,
     required this.photoApiService,
     this.initialFile,
+    this.friends = const <FriendListItem>[],
   });
 
   final PhotoApiService photoApiService;
   final XFile? initialFile;
+  final List<FriendListItem> friends;
 
   @override
   State<UploadScreen> createState() => _UploadScreenState();
@@ -27,6 +30,8 @@ class _UploadScreenState extends State<UploadScreen> {
   bool _isCapturing = false;
   bool _isUploading = false;
   String? _errorMessage;
+  bool _shareWithEveryone = true;
+  final Set<String> _selectedFriendIds = <String>{};
   final TextEditingController _captionController = TextEditingController();
 
   @override
@@ -128,6 +133,17 @@ class _UploadScreenState extends State<UploadScreen> {
       return;
     }
 
+    List<String>? friendIds;
+    if (!_shareWithEveryone) {
+      friendIds = _selectedFriendIds.toList()..sort();
+      if (friendIds.isEmpty) {
+        setState(() {
+          _errorMessage = 'Select at least one friend to share with.';
+        });
+        return;
+      }
+    }
+
     setState(() {
       _isUploading = true;
       _errorMessage = null;
@@ -138,6 +154,7 @@ class _UploadScreenState extends State<UploadScreen> {
       final response = await widget.photoApiService.uploadPhoto(
         image: File(captured.path),
         caption: caption.isEmpty ? null : caption,
+        friendIds: friendIds,
       );
       if (!mounted) return;
       Navigator.of(context).pop(response);
@@ -160,6 +177,8 @@ class _UploadScreenState extends State<UploadScreen> {
       _capturedFile = null;
       _captionController.clear();
       _errorMessage = null;
+      _shareWithEveryone = true;
+      _selectedFriendIds.clear();
     });
     if (_cameraController == null) {
       _setupCamera();
@@ -191,7 +210,7 @@ class _UploadScreenState extends State<UploadScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                if (_capturedFile != null)
+                if (_capturedFile != null) ...[
                   TextField(
                     controller: _captionController,
                     style: const TextStyle(color: Colors.white),
@@ -207,6 +226,9 @@ class _UploadScreenState extends State<UploadScreen> {
                     ),
                     maxLines: 2,
                   ),
+                  const SizedBox(height: 12),
+                  _buildShareSection(),
+                ],
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 12),
                   Text(
@@ -262,6 +284,131 @@ class _UploadScreenState extends State<UploadScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildShareSection() {
+    final List<FriendListItem> friends = widget.friends;
+    if (friends.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white12,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: const Text(
+          'No accepted friends yet. Uploads stay private until someone is accepted.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    final List<FriendListItem> sortedFriends =
+        List<FriendListItem>.from(friends)
+          ..sort((a, b) {
+            final String aName =
+                a.displayName.isNotEmpty ? a.displayName : a.friendUserId;
+            final String bName =
+                b.displayName.isNotEmpty ? b.displayName : b.friendUserId;
+            return aName.toLowerCase().compareTo(bName.toLowerCase());
+          });
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white12,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Share with all accepted friends',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+              Switch(
+                value: _shareWithEveryone,
+                onChanged: _isUploading
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _shareWithEveryone = value;
+                          if (value) {
+                            _selectedFriendIds.clear();
+                          }
+                          _errorMessage = null;
+                        });
+                      },
+                activeThumbColor: Colors.lightBlueAccent,
+                inactiveThumbColor: Colors.white60,
+                inactiveTrackColor: Colors.white30,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _shareWithEveryone
+              ? 'All accepted friends will see this photo.'
+              : 'Choose at least one friend to receive this photo.',
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
+        ),
+        if (!_shareWithEveryone) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: sortedFriends.map((friend) {
+              final String userId = friend.friendUserId;
+              final bool isSelected = _selectedFriendIds.contains(userId);
+              final String label =
+                  friend.displayName.isNotEmpty ? friend.displayName : userId;
+              return FilterChip(
+                label: Text(
+                  label,
+                  style: TextStyle(
+                    color: isSelected ? Colors.black : Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                selected: isSelected,
+                onSelected: _isUploading
+                    ? null
+                    : (selected) {
+                        setState(() {
+                          if (selected) {
+                            _selectedFriendIds.add(userId);
+                          } else {
+                            _selectedFriendIds.remove(userId);
+                          }
+                          _errorMessage = null;
+                        });
+                      },
+                backgroundColor: Colors.white12,
+                selectedColor: Colors.white,
+                checkmarkColor: Colors.black87,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              );
+            }).toList(),
+          ),
+          if (_selectedFriendIds.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Select at least one friend.',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+            ),
+        ],
+      ],
     );
   }
 
