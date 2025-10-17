@@ -516,16 +516,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 : _selectedFriendUserId == _userId
                     ? 'You have not shared a photo yet.'
                     : 'No photos from $friendFilterLabel yet.';
-        final bool canPullToRefresh = _activePreviewPhoto == null ||
-            (visiblePhotos.isNotEmpty &&
-                _activePreviewPhoto!.id == visiblePhotos.first.id);
         final Widget previewWidget = visiblePhotos.isNotEmpty
             ? _PhotoFeedPreview(
                 photos: visiblePhotos,
                 resolvePhotoUrl: _resolvePhotoUrl,
                 onActivePhotoChanged: _handleActivePhotoChanged,
                 onRefresh: _refreshHome,
-                enableRefresh: canPullToRefresh,
               )
             : _buildPreviewPlaceholder(message: placeholderMessage);
         final ImageProvider? historyImage = latestPhoto != null
@@ -1012,38 +1008,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _deletingPhotoId = photo.id;
     });
 
+    String? errorMessage;
     try {
       await _photoApiService.deletePhoto(photo.id);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _photos = _photos.where((p) => p.id != photo.id).toList();
-        if (_activePreviewPhoto?.id == photo.id) {
-          final updated = _currentPhotos();
-          _activePreviewPhoto =
-              updated.isNotEmpty ? updated.first : null;
-        }
-        _deletingPhotoId = null;
-      });
-
-      if (!mounted) {
-        return;
-      }
-      Navigator.of(modalContext).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Photo removed.')),
-      );
     } on PhotoApiException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _deletingPhotoId = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      errorMessage = error.message;
     } catch (error, stackTrace) {
       developer.log(
         'Failed to delete photo',
@@ -1051,14 +1020,54 @@ class _HomeScreenState extends State<HomeScreen> {
         error: error,
         stackTrace: stackTrace,
       );
-      if (!mounted) {
-        return;
+      errorMessage = 'Unable to delete photo right now.';
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    final removedPhotoId = errorMessage == null ? photo.id : null;
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      if (removedPhotoId != null) {
+        _photos = _photos.where((p) => p.id != removedPhotoId).toList();
+        if (_activePreviewPhoto?.id == removedPhotoId) {
+          final updated = _currentPhotos();
+          _activePreviewPhoto =
+              updated.isNotEmpty ? updated.first : null;
+        }
       }
-      setState(() {
-        _deletingPhotoId = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to delete photo right now.')),
+      _deletingPhotoId = null;
+    });
+
+    if (!mounted) {
+      return;
+    }
+
+    // Check if the modal context is still valid before using it
+    if (!modalContext.mounted) {
+      return;
+    }
+
+    // Capture context-dependent values before using them
+    final navigator = Navigator.of(modalContext);
+    final messenger = ScaffoldMessenger.maybeOf(modalContext);
+    
+    if (removedPhotoId != null) {
+      if (navigator.canPop()) {
+        navigator.pop();
+      }
+      messenger?.showSnackBar(
+        const SnackBar(content: Text('Photo removed.')),
+      );
+    } else if (errorMessage != null) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text(errorMessage)),
       );
     }
   }
@@ -1832,14 +1841,12 @@ class _PhotoFeedPreview extends StatefulWidget {
     required this.resolvePhotoUrl,
     this.onActivePhotoChanged,
     this.onRefresh,
-    this.enableRefresh = false,
   });
 
   final List<PhotoResponse> photos;
   final String Function(String url) resolvePhotoUrl;
   final ValueChanged<PhotoResponse?>? onActivePhotoChanged;
   final Future<void> Function()? onRefresh;
-  final bool enableRefresh;
 
   @override
   State<_PhotoFeedPreview> createState() => _PhotoFeedPreviewState();
@@ -1939,7 +1946,7 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
 
     final int safeIndex =
         _currentIndex.clamp(0, widget.photos.length - 1);
-    final bool refreshEnabled = widget.enableRefresh && widget.onRefresh != null;
+    final bool refreshEnabled = widget.onRefresh != null && _currentIndex == 0;
     Widget content = Stack(
       fit: StackFit.expand,
       children: [
@@ -2007,9 +2014,14 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
       ],
     );
 
-    if (refreshEnabled) {
+    if (widget.onRefresh != null) {
       content = RefreshIndicator(
-        onRefresh: widget.onRefresh!,
+        onRefresh: () async {
+          if (_currentIndex != 0) {
+            return;
+          }
+          await widget.onRefresh!();
+        },
         color: Colors.white,
         backgroundColor: const Color(0xFF0F1F39),
         child: NotificationListener<OverscrollIndicatorNotification>(
