@@ -9,23 +9,25 @@ class CameraCaptureScreen extends StatelessWidget {
     required this.avatarImage,
     required this.friendsLabel,
     required this.preview,
+    required this.onProfile,
     required this.onMessages,
     required this.onGallery,
     required this.onShutter,
-    required this.onSwitchCamera,
     required this.onHistory,
     required this.historyImage,
     required this.onFriendFilter,
+    this.onReplyWithPhoto,
     this.historyLabel = 'History',
   });
 
   final ImageProvider? avatarImage;
   final String friendsLabel;
   final Widget preview;
+  final VoidCallback onProfile;
   final VoidCallback onMessages;
   final FutureOr<void> Function() onGallery;
   final Future<void> Function()? onShutter;
-  final VoidCallback onSwitchCamera;
+  final FutureOr<void> Function()? onReplyWithPhoto;
   final VoidCallback onHistory;
   final ImageProvider? historyImage;
   final String historyLabel;
@@ -59,7 +61,7 @@ class CameraCaptureScreen extends StatelessWidget {
               customBorder: const CircleBorder(),
               onTap: () {
                 debugPrint('Profile');
-                onMessages();
+                onProfile();
               },
               child: Container(
                 width: 42,
@@ -200,42 +202,51 @@ class CameraCaptureScreen extends StatelessWidget {
         _buildShutterButton(),
         const SizedBox(width: 28),
         _buildSquareButton(
-          onTap: () {
-            debugPrint('Switch Camera');
-            onSwitchCamera();
-          },
-          icon: Icons.cameraswitch_outlined,
+          onTap: onReplyWithPhoto,
+          icon: Icons.reply_outlined,
+          enabled: onReplyWithPhoto != null,
         ),
       ],
     );
   }
 
   Widget _buildSquareButton({
-    required FutureOr<void> Function() onTap,
+    FutureOr<void> Function()? onTap,
     required IconData icon,
+    bool enabled = true,
   }) {
+    final bool effectiveEnabled = enabled && onTap != null;
     return SizedBox(
       width: 64,
       height: 64,
       child: Material(
-        color: Colors.white10,
+        color: effectiveEnabled ? Colors.white10 : Colors.white10.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(18),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () async {
-            try {
-              await Future.sync(onTap);
-            } catch (error, _) {
-              debugPrint('Square button tap failed: $error');
-            }
-          },
+          onTap: effectiveEnabled
+              ? () async {
+                  try {
+                    await Future.sync(onTap);
+                  } catch (error, _) {
+                    debugPrint('Square button tap failed: $error');
+                  }
+                }
+              : null,
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white24, width: 1),
+              border: Border.all(
+                color: effectiveEnabled ? Colors.white24 : Colors.white10,
+                width: 1,
+              ),
             ),
             child: Center(
-              child: Icon(icon, color: Colors.white, size: 28),
+              child: Icon(
+                icon,
+                color: effectiveEnabled ? Colors.white : Colors.white30,
+                size: 28,
+              ),
             ),
           ),
         ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_line_sdk/flutter_line_sdk.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'package:loveforu/services/chat_api_service.dart';
 import 'package:loveforu/services/cookie_http_client.dart';
 import 'package:loveforu/services/friend_api_service.dart';
 import 'package:loveforu/services/photo_api_service.dart';
@@ -13,6 +15,7 @@ import 'package:loveforu/services/user_api_service.dart';
 import 'package:loveforu/theme/app_gradients.dart';
 
 import 'camera_capture_screen.dart';
+import 'chat_threads_screen.dart';
 import 'upload_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -34,11 +37,14 @@ class _HomeScreenState extends State<HomeScreen> {
   List<FriendListItem> _friends = <FriendListItem>[];
   String? _selectedFriendUserId;
   bool _isAddingFriend = false;
+  PhotoResponse? _activePreviewPhoto;
+  bool _isReplyingWithPhoto = false;
 
   late final CookieHttpClient _cookieClient;
   late final UserApiService _userApiService;
   late final FriendApiService _friendApiService;
   late final PhotoApiService _photoApiService;
+  late final ChatApiService _chatApiService;
   late final ImagePicker _imagePicker;
 
   @override
@@ -48,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _userApiService = UserApiService(client: _cookieClient);
     _friendApiService = FriendApiService(client: _cookieClient);
     _photoApiService = PhotoApiService(client: _cookieClient);
+    _chatApiService = ChatApiService(client: _cookieClient);
     _imagePicker = ImagePicker();
     _restoreSession();
   }
@@ -193,6 +200,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _isLoadingPhotos = false;
         _errorMessage = null;
         _isAddingFriend = false;
+        _activePreviewPhoto = null;
+        _isReplyingWithPhoto = false;
       });
       _cookieClient.clearCookies();
     } catch (e) {
@@ -214,6 +223,9 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _photos = photos;
         _errorMessage = null;
+        final updated = _currentPhotos();
+        _activePreviewPhoto =
+            updated.isNotEmpty ? updated.first : null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -261,6 +273,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _refreshHome() async {
+    await Future.wait([
+      _loadPhotos(),
+      _loadFriends(),
+    ]);
+  }
+
   List<PhotoResponse> _currentPhotos() {
     if (_selectedFriendUserId == null) {
       return _photos;
@@ -268,6 +287,17 @@ class _HomeScreenState extends State<HomeScreen> {
     return _photos
         .where((photo) => photo.uploaderId == _selectedFriendUserId)
         .toList();
+  }
+
+  void _handleActivePhotoChanged(PhotoResponse? photo) {
+    final String? currentId = _activePreviewPhoto?.id;
+    final String? newId = photo?.id;
+    if (currentId == newId) {
+      return;
+    }
+    setState(() {
+      _activePreviewPhoto = photo;
+    });
   }
 
   String _currentFriendFilterLabel() {
@@ -418,6 +448,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _photos = <PhotoResponse>[photo, ..._photos];
       _errorMessage = null;
+      final updated = _currentPhotos();
+      _activePreviewPhoto =
+          updated.isNotEmpty ? updated.first : null;
     });
   }
 
@@ -465,55 +498,107 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLoggedInLayout(BuildContext context) {
-    final List<PhotoResponse> visiblePhotos = _currentPhotos();
-    final PhotoResponse? latestPhoto =
-        visiblePhotos.isNotEmpty ? visiblePhotos.first : null;
-    final String friendFilterLabel = _currentFriendFilterLabel();
-    final String placeholderMessage =
-        _selectedFriendUserId == null || _selectedFriendUserId!.isEmpty
-            ? 'Share a moment with friends.'
-            : _selectedFriendUserId == _userId
-                ? 'You have not shared a photo yet.'
-                : 'No photos from $friendFilterLabel yet.';
-    final Widget previewWidget = visiblePhotos.isNotEmpty
-        ? _PhotoFeedPreview(
-            photos: visiblePhotos,
-            resolvePhotoUrl: _resolvePhotoUrl,
-          )
-        : _buildPreviewPlaceholder(message: placeholderMessage);
-    final ImageProvider? historyImage = latestPhoto != null
-        ? NetworkImage(_resolvePhotoUrl(latestPhoto.imageUrl))
-        : null;
-    final ImageProvider? avatarImage =
-        _pictureUrl.isNotEmpty ? NetworkImage(_pictureUrl) : null;
-    final String friendsLabel = 'Viewing: $friendFilterLabel';
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double availableHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : MediaQuery.of(context).size.height;
+        final List<PhotoResponse> visiblePhotos = _currentPhotos();
+        final PhotoResponse? latestPhoto =
+            visiblePhotos.isNotEmpty ? visiblePhotos.first : null;
+        final String friendFilterLabel = _currentFriendFilterLabel();
+        final String placeholderMessage =
+            _selectedFriendUserId == null || _selectedFriendUserId!.isEmpty
+                ? 'Share a moment with friends.'
+                : _selectedFriendUserId == _userId
+                    ? 'You have not shared a photo yet.'
+                    : 'No photos from $friendFilterLabel yet.';
+        final Widget previewWidget = visiblePhotos.isNotEmpty
+            ? _PhotoFeedPreview(
+                photos: visiblePhotos,
+                resolvePhotoUrl: _resolvePhotoUrl,
+                onActivePhotoChanged: _handleActivePhotoChanged,
+              )
+            : _buildPreviewPlaceholder(message: placeholderMessage);
+        final ImageProvider? historyImage = latestPhoto != null
+            ? NetworkImage(_resolvePhotoUrl(latestPhoto.imageUrl))
+            : null;
+        final ImageProvider? avatarImage =
+            _pictureUrl.isNotEmpty ? NetworkImage(_pictureUrl) : null;
+        final String friendsLabel = 'Viewing: $friendFilterLabel';
+        PhotoResponse? activePhoto = _activePreviewPhoto;
+        if (activePhoto != null) {
+          final bool exists = visiblePhotos.any(
+            (photo) => photo.id == activePhoto!.id,
+          );
+          if (!exists) {
+            activePhoto =
+                visiblePhotos.isNotEmpty ? visiblePhotos.first : null;
+          }
+        }
+        FriendListItem? replyFriend;
+        if (activePhoto != null &&
+            activePhoto.uploaderId.isNotEmpty &&
+            activePhoto.uploaderId != _userId) {
+          for (final friend in _friends) {
+            if (friend.friendUserId == activePhoto.uploaderId) {
+              replyFriend = friend;
+              break;
+            }
+          }
+        }
+        final PhotoResponse? photoForReply = activePhoto;
+        final FriendListItem? friendForReply = replyFriend;
+        FutureOr<void> Function()? replyAction;
+        if (!_isReplyingWithPhoto &&
+            _userId.isNotEmpty &&
+            photoForReply != null &&
+            friendForReply != null) {
+          replyAction = () => _replyWithPhoto(photoForReply, friendForReply);
+        }
 
-    return Column(
-      children: [
-        Expanded(
-          child: CameraCaptureScreen(
-            avatarImage: avatarImage,
-            friendsLabel: friendsLabel,
-            preview: previewWidget,
-            historyImage: historyImage,
-            onMessages: _showUserMenu,
-            onGallery: _pickImageFromGallery,
-            onShutter: _isLoadingPhotos ? null : _openUploadScreen,
-            onSwitchCamera: () {},
-            onHistory: () => _showGallery(context),
-            onFriendFilter: _showFriendFilter,
-          ),
-        ),
-        if (_errorMessage != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 12, bottom: 8),
-            child: Text(
-              _errorMessage!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.redAccent),
+        return RefreshIndicator(
+          onRefresh: _refreshHome,
+          color: Colors.white,
+          backgroundColor: const Color(0xFF0F1F39),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: availableHeight),
+              child: Column(
+                children: [
+                  SizedBox(
+                    height: availableHeight,
+                    child: CameraCaptureScreen(
+                      avatarImage: avatarImage,
+                      friendsLabel: friendsLabel,
+                      preview: previewWidget,
+                      onProfile: _showUserMenu,
+                      onMessages: _openChatThreads,
+                      historyImage: historyImage,
+                      onGallery: _pickImageFromGallery,
+                      onShutter:
+                          _isLoadingPhotos ? null : _openUploadScreen,
+                      onReplyWithPhoto: replyAction,
+                      onHistory: () => _showGallery(context),
+                      onFriendFilter: _showFriendFilter,
+                    ),
+                  ),
+                  if (_errorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12, bottom: 8),
+                      child: Text(
+                        _errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-      ],
+        );
+      },
     );
   }
 
@@ -746,7 +831,152 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       _selectedFriendUserId = selectedId;
+      final filtered = _currentPhotos();
+      _activePreviewPhoto =
+          filtered.isNotEmpty ? filtered.first : null;
     });
+  }
+
+  Future<void> _replyWithPhoto(
+    PhotoResponse photo,
+    FriendListItem friend,
+  ) async {
+    if (_isReplyingWithPhoto) {
+      return;
+    }
+    if (photo.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to send this photo.')),
+      );
+      return;
+    }
+
+    final String? messageContent = await _promptPhotoReplyMessage(friend);
+    if (messageContent == null) {
+      return;
+    }
+
+    setState(() {
+      _isReplyingWithPhoto = true;
+    });
+
+    try {
+      await _chatApiService.sendMessage(
+        friendshipId: friend.friendshipId,
+        content: messageContent.isNotEmpty ? messageContent : null,
+        photoId: photo.id,
+      );
+      if (!mounted) {
+        return;
+      }
+      final recipient = friend.displayName.isNotEmpty
+          ? friend.displayName
+          : friend.friendUserId;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Photo sent to $recipient.')),
+      );
+    } on ChatApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to reply with photo',
+        name: 'HomeScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to send photo right now.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isReplyingWithPhoto = false;
+        });
+      }
+    }
+  }
+
+  Future<String?> _promptPhotoReplyMessage(FriendListItem friend) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0F1F39),
+          title: Text(
+            'Reply to ${friend.displayName.isNotEmpty ? friend.displayName : friend.friendUserId}',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Add a message (optional)',
+                style: TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLines: 4,
+                minLines: 1,
+                autofocus: true,
+                cursorColor: Colors.white,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  hintText: 'Say something about the photo…',
+                  hintStyle: TextStyle(color: Colors.white54),
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text.trim()),
+              child: const Text('Send'),
+            ),
+          ],
+        );
+      },
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.dispose();
+    });
+    return result;
+  }
+
+  Future<void> _openChatThreads() async {
+    if (_userId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Login to open chats.')),
+      );
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatThreadsScreen(
+          chatApiService: _chatApiService,
+          currentUserId: _userId,
+          friendApiService: _friendApiService,
+        ),
+      ),
+    );
   }
 
   void _showFriendRequests() {
@@ -810,6 +1040,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   _userId,
                   style: const TextStyle(color: Colors.white54),
                 ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.chat_bubble_outline, color: Colors.white),
+                title: const Text('Chats', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.of(modalContext).pop();
+                  _openChatThreads();
+                },
               ),
               ListTile(
                 leading: const Icon(Icons.refresh, color: Colors.white),
@@ -1489,10 +1727,12 @@ class _PhotoFeedPreview extends StatefulWidget {
   const _PhotoFeedPreview({
     required this.photos,
     required this.resolvePhotoUrl,
+    this.onActivePhotoChanged,
   });
 
   final List<PhotoResponse> photos;
   final String Function(String url) resolvePhotoUrl;
+  final ValueChanged<PhotoResponse?>? onActivePhotoChanged;
 
   @override
   State<_PhotoFeedPreview> createState() => _PhotoFeedPreviewState();
@@ -1509,6 +1749,10 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
     _controller = PageController();
     _lastFirstPhotoId =
         widget.photos.isNotEmpty ? widget.photos.first.id : null;
+    _notifyActivePhoto(
+      widget.photos.isNotEmpty ? widget.photos.first : null,
+      schedule: true,
+    );
   }
 
   @override
@@ -1516,6 +1760,7 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
     super.didUpdateWidget(oldWidget);
     if (widget.photos.isEmpty) {
       _lastFirstPhotoId = null;
+      _notifyActivePhoto(null);
       if (_currentIndex != 0) {
         _currentIndex = 0;
         _scheduleUiUpdate();
@@ -1541,6 +1786,7 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
         _currentIndex = 0;
         _scheduleUiUpdate();
       }
+      _notifyActivePhoto(widget.photos.isNotEmpty ? widget.photos.first : null);
       return;
     }
 
@@ -1562,8 +1808,15 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
       if (_currentIndex != newIndex) {
         _currentIndex = newIndex;
         _scheduleUiUpdate();
+        _notifyActivePhoto(
+          widget.photos.isNotEmpty ? widget.photos[newIndex] : null,
+        );
       }
+      return;
     }
+    _notifyActivePhoto(
+      widget.photos.isNotEmpty ? widget.photos[_currentIndex] : null,
+    );
   }
 
   @override
@@ -1593,6 +1846,9 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
             setState(() {
               _currentIndex = index;
             });
+            if (index >= 0 && index < widget.photos.length) {
+              widget.onActivePhotoChanged?.call(widget.photos[index]);
+            }
           },
           itemBuilder: (_, index) {
             final photo = widget.photos[index];
@@ -1689,6 +1945,23 @@ class _PhotoFeedPreviewState extends State<_PhotoFeedPreview> {
       }
       setState(() {});
     });
+  }
+
+  void _notifyActivePhoto(PhotoResponse? photo, {bool schedule = false}) {
+    final callback = widget.onActivePhotoChanged;
+    if (callback == null) {
+      return;
+    }
+    if (schedule) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        callback(photo);
+      });
+      return;
+    }
+    callback(photo);
   }
 }
 
