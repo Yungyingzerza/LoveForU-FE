@@ -3,19 +3,19 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 /// Foreground camera UI inspired by Locket-style apps.
-class CameraCaptureScreen extends StatelessWidget {
-  const CameraCaptureScreen({
+class CameraCaptureView extends StatelessWidget {
+  const CameraCaptureView({
     super.key,
     required this.avatarImage,
     required this.friendsLabel,
     required this.preview,
-    required this.onProfile,
-    required this.onMessages,
-    required this.onGallery,
-    required this.onShutter,
-    required this.onHistory,
+    required this.onProfileTap,
+    required this.onMessagesTap,
+    required this.onGalleryTap,
+    required this.onShutterTap,
+    required this.onHistoryTap,
     required this.historyImage,
-    required this.onFriendFilter,
+    required this.onFriendFilterTap,
     this.onReplyWithPhoto,
     this.historyLabel = 'History',
   });
@@ -23,15 +23,15 @@ class CameraCaptureScreen extends StatelessWidget {
   final ImageProvider? avatarImage;
   final String friendsLabel;
   final Widget preview;
-  final VoidCallback onProfile;
-  final VoidCallback onMessages;
-  final FutureOr<void> Function() onGallery;
-  final Future<void> Function()? onShutter;
+  final VoidCallback onProfileTap;
+  final VoidCallback onMessagesTap;
+  final FutureOr<void> Function() onGalleryTap;
+  final Future<void> Function()? onShutterTap;
   final FutureOr<void> Function()? onReplyWithPhoto;
-  final VoidCallback onHistory;
+  final VoidCallback onHistoryTap;
   final ImageProvider? historyImage;
   final String historyLabel;
-  final VoidCallback onFriendFilter;
+  final VoidCallback onFriendFilterTap;
 
   @override
   Widget build(BuildContext context) {
@@ -59,10 +59,7 @@ class CameraCaptureScreen extends StatelessWidget {
             shape: const CircleBorder(),
             child: InkWell(
               customBorder: const CircleBorder(),
-              onTap: () {
-                debugPrint('Profile');
-                onProfile();
-              },
+              onTap: onProfileTap,
               child: Container(
                 width: 42,
                 height: 42,
@@ -85,10 +82,7 @@ class CameraCaptureScreen extends StatelessWidget {
             borderRadius: BorderRadius.circular(40),
             child: InkWell(
               borderRadius: BorderRadius.circular(40),
-              onTap: () {
-                debugPrint('Friend filter');
-                onFriendFilter();
-              },
+              onTap: onFriendFilterTap,
               child: Container(
                 constraints: const BoxConstraints(minWidth: 160, minHeight: 40),
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -131,13 +125,10 @@ class CameraCaptureScreen extends StatelessWidget {
               shape: const CircleBorder(),
               child: InkWell(
                 customBorder: const CircleBorder(),
-                onTap: () {
-                  debugPrint('Messages');
-                  onMessages();
-                },
+                onTap: onMessagesTap,
                 child: const Center(
-                  child:
-                      Icon(Icons.chat_bubble_outline, color: Colors.white, size: 22),
+                  child: Icon(Icons.chat_bubble_outline,
+                      color: Colors.white, size: 22),
                 ),
               ),
             ),
@@ -192,151 +183,104 @@ class CameraCaptureScreen extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         _buildSquareButton(
-          onTap: () {
-            debugPrint('Gallery');
-            return onGallery();
-          },
+          onTap: onGalleryTap,
           icon: Icons.image_outlined,
         ),
-        const SizedBox(width: 28),
+        const SizedBox(width: 32),
         _buildShutterButton(),
-        const SizedBox(width: 28),
+        const SizedBox(width: 32),
         _buildSquareButton(
-          onTap: onReplyWithPhoto,
-          icon: Icons.reply_outlined,
-          enabled: onReplyWithPhoto != null,
+          onTap: onReplyWithPhoto ?? onHistoryTap,
+          icon: onReplyWithPhoto == null
+              ? Icons.history
+              : Icons.reply_outlined,
         ),
       ],
     );
   }
 
-  Widget _buildSquareButton({
-    FutureOr<void> Function()? onTap,
-    required IconData icon,
-    bool enabled = true,
-  }) {
-    final bool effectiveEnabled = enabled && onTap != null;
-    return SizedBox(
-      width: 64,
-      height: 64,
-      child: Material(
-        color: effectiveEnabled ? Colors.white10 : Colors.white10.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(18),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: effectiveEnabled
-              ? () async {
-                  try {
-                    await Future.sync(onTap);
-                  } catch (error, _) {
-                    debugPrint('Square button tap failed: $error');
-                  }
-                }
-              : null,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: effectiveEnabled ? Colors.white24 : Colors.white10,
-                width: 1,
+  Widget _buildHistoryPill() {
+    return GestureDetector(
+      onTap: onHistoryTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white12,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: Colors.white30,
+              backgroundImage: historyImage,
+              child: historyImage == null
+                  ? const Icon(Icons.browse_gallery, color: Colors.white70)
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              historyLabel,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            child: Center(
-              child: Icon(
-                icon,
-                color: effectiveEnabled ? Colors.white : Colors.white30,
-                size: 28,
-              ),
-            ),
-          ),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right, color: Colors.white70, size: 20),
+          ],
         ),
       ),
     );
   }
 
   Widget _buildShutterButton() {
-    return SizedBox(
-      width: 132,
-      height: 132,
-      child: Material(
-        color: Colors.white10,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onShutter == null
-              ? null
-              : () async {
-                  debugPrint('Shutter');
-                  await onShutter!.call();
-                },
-          child: Container(
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white30, width: 8),
-            ),
-            child: Container(
-              width: 92,
-              height: 92,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white,
-              ),
-            ),
+    final isDisabled = onShutterTap == null;
+    return GestureDetector(
+      onTap: isDisabled ? null : () => onShutterTap?.call(),
+      child: Container(
+        width: 88,
+        height: 88,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: isDisabled ? Colors.white30 : Colors.white,
+            width: 6,
           ),
+        ),
+        alignment: Alignment.center,
+        child: Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isDisabled ? Colors.white12 : Colors.white,
+          ),
+          child: isDisabled
+              ? const Icon(Icons.hourglass_top,
+                  color: Colors.white54, size: 28)
+              : null,
         ),
       ),
     );
   }
 
-  Widget _buildHistoryPill() {
-    return InkWell(
-      onTap: () {
-        debugPrint('History');
-        onHistory();
-      },
-      borderRadius: BorderRadius.circular(40),
-      child: Container(
-        constraints: const BoxConstraints(minWidth: 190, minHeight: 46),
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.white12,
-          borderRadius: BorderRadius.circular(40),
-          border: Border.all(color: Colors.white24, width: 1),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: historyImage != null
-                  ? Image(
-                      image: historyImage!,
-                      width: 26,
-                      height: 26,
-                      fit: BoxFit.cover,
-                    )
-                  : Container(
-                      width: 26,
-                      height: 26,
-                      color: Colors.white12,
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.photo_library_outlined,
-                          color: Colors.white70, size: 18),
-                    ),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              historyLabel,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.2,
-              ),
-            ),
-          ],
+  Widget _buildSquareButton({
+    required FutureOr<void> Function() onTap,
+    required IconData icon,
+  }) {
+    return SizedBox(
+      width: 56,
+      height: 56,
+      child: Material(
+        color: Colors.white12,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => onTap(),
+          child: Icon(icon, color: Colors.white, size: 26),
         ),
       ),
     );
