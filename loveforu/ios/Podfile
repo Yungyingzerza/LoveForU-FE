@@ -41,4 +41,27 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
   end
+
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.native_targets.each do |native_target|
+      next unless native_target.name == 'Runner'
+
+      native_target.build_configurations.each do |config|
+        search_paths = config.build_settings['FRAMEWORK_SEARCH_PATHS']
+
+        if search_paths.is_a?(String)
+          search_paths = [search_paths]
+        elsif search_paths.nil?
+          search_paths = ['$(inherited)']
+        end
+
+        runner_path = '$(PODS_CONFIGURATION_BUILD_DIR)/Pods-Runner'
+        unless search_paths.include?(runner_path)
+          search_paths << runner_path
+        end
+
+        config.build_settings['FRAMEWORK_SEARCH_PATHS'] = search_paths
+      end
+    end
+  end
 end
